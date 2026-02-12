@@ -10,6 +10,11 @@ const addBtn = document.getElementById('add-terminal');
 const termViews = new Map();
 let activeId = null;
 
+function getTerminalIds() {
+  return [...terminalListEl.querySelectorAll('li:not(.ghost)')]
+    .map(li => Number(li.dataset.id));
+}
+
 // ---- Sidebar rendering ----
 
 function renderList(terminals) {
@@ -102,6 +107,10 @@ function createTermView(id) {
   // Intercept Ctrl+V for paste and Ctrl+C for copy (when selection exists)
   xterm.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
+    // Ctrl+PageUp/PageDown → terminal switching (handled at document level)
+    if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
+      return false;
+    }
     // Ctrl+V or Ctrl+Shift+V → paste from clipboard
     if (e.ctrlKey && e.key === 'v') {
       navigator.clipboard.readText().then(text => {
@@ -247,6 +256,26 @@ window.addEventListener('resize', () => {
       view.fitAddon.fit();
     }
   }
+});
+
+// ---- Keyboard shortcuts ----
+
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey) return;
+  if (e.key !== 'PageUp' && e.key !== 'PageDown') return;
+
+  e.preventDefault();
+  const ids = getTerminalIds();
+  if (ids.length === 0) return;
+
+  const idx = ids.indexOf(activeId);
+  let next;
+  if (e.key === 'PageUp') {
+    next = idx <= 0 ? ids[ids.length - 1] : ids[idx - 1];
+  } else {
+    next = idx < 0 || idx >= ids.length - 1 ? ids[0] : ids[idx + 1];
+  }
+  activateTerminal(next);
 });
 
 // ---- Init ----
