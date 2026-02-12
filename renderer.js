@@ -1,12 +1,12 @@
-const { Terminal } = require('@xterm/xterm');
-const { FitAddon } = require('@xterm/addon-fit');
+import { Terminal } from './node_modules/@xterm/xterm/lib/xterm.mjs';
+import { FitAddon } from './node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
 
 const terminalListEl = document.getElementById('terminal-list');
 const containerEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
 const addBtn = document.getElementById('add-terminal');
 
-// Map of id -> { xterm, fitAddon, disposeData }
+// Map of id -> { xterm, fitAddon, wrapper, opened }
 const termViews = new Map();
 let activeId = null;
 
@@ -85,18 +85,24 @@ function createTermView(id) {
     window.termParty.resize(id, cols, rows);
   });
 
-  termViews.set(id, { xterm, fitAddon });
+  // Persistent wrapper — lives in the DOM until the terminal is killed
+  const wrapper = document.createElement('div');
+  wrapper.style.width = '100%';
+  wrapper.style.height = '100%';
+  wrapper.style.display = 'none';
+  containerEl.appendChild(wrapper);
+
+  termViews.set(id, { xterm, fitAddon, wrapper, opened: false });
 }
 
 function activateTerminal(id) {
   if (activeId === id) return;
 
-  // Detach current terminal view
+  // Hide previous terminal's wrapper
   if (activeId !== null) {
     const prev = termViews.get(activeId);
     if (prev) {
-      // xterm doesn't have a native detach, so we just clear the container
-      containerEl.innerHTML = '';
+      prev.wrapper.style.display = 'none';
     }
   }
 
@@ -109,19 +115,16 @@ function activateTerminal(id) {
     view = termViews.get(id);
   }
 
-  // Create a wrapper div and open xterm into it
-  const wrapper = document.createElement('div');
-  wrapper.style.width = '100%';
-  wrapper.style.height = '100%';
-  containerEl.innerHTML = '';
-  containerEl.appendChild(wrapper);
-  view.xterm.open(wrapper);
+  // Show wrapper and open xterm only once
+  view.wrapper.style.display = '';
+  if (!view.opened) {
+    view.xterm.open(view.wrapper);
+    view.opened = true;
+  }
   view.fitAddon.fit();
   view.xterm.focus();
 
-  // Send initial resize to backend
   window.termParty.resize(id, view.xterm.cols, view.xterm.rows);
-
   refreshList();
 }
 
@@ -130,11 +133,11 @@ async function killTerminal(id) {
   const view = termViews.get(id);
   if (view) {
     view.xterm.dispose();
+    view.wrapper.remove();
     termViews.delete(id);
   }
   if (activeId === id) {
     activeId = null;
-    containerEl.innerHTML = '';
     emptyStateEl.style.display = '';
   }
   refreshList();
@@ -163,11 +166,11 @@ window.termParty.onExit(({ id }) => {
   const view = termViews.get(id);
   if (view) {
     view.xterm.dispose();
+    view.wrapper.remove();
     termViews.delete(id);
   }
   if (activeId === id) {
     activeId = null;
-    containerEl.innerHTML = '';
     emptyStateEl.style.display = '';
   }
   refreshList();
