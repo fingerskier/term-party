@@ -1,0 +1,135 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1e1e2e;
+  color: #cdd6f4;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+}
+
+/* --- Sidebar --- */
+
+#sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: #181825;
+  border-right: 1px solid #313244;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 12px;
+}
+
+#sidebar h1 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #cba6f7;
+  padding: 4px 0;
+}
+
+#add-terminal {
+  background: #313244;
+  color: #cdd6f4;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+#add-terminal:hover {
+  background: #45475a;
+}
+
+#terminal-list {
+  list-style: none;
+  flex: 1;
+  overflow-y: auto;
+}
+
+#terminal-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+#terminal-list li:hover {
+  background: #313244;
+}
+
+#terminal-list li.active {
+  background: #45475a;
+}
+
+#terminal-list li .term-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+#terminal-list li .kill-btn {
+  background: none;
+  border: none;
+  color: #f38ba8;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 4px;
+  margin-left: 6px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+#terminal-list li:hover .kill-btn {
+  opacity: 1;
+}
+
+#terminal-list li .kill-btn:hover {
+  color: #eba0ac;
+}
+
+/* --- Viewer --- */
+
+#viewer {
+  flex: 1;
+  display: flex;
+  position: relative;
+  background: #1e1e2e;
+}
+
+#empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #585b70;
+  font-size: 14px;
+}
+
+#terminal-container {
+  flex: 1;
+  position: relative;
+}
+
+#terminal-container .xterm {
+  height: 100%;
+  padding: 8px;
+}

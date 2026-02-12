@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;">
+  <title>term-party</title>
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h1>term-party</h1>
+      <button id="add-terminal">+ New Terminal</button>
+      <ul id="terminal-list"></ul>
+    </aside>
+    <main id="viewer">
+      <div id="empty-state">Select or create a terminal to get started.</div>
+      <div id="terminal-container"></div>
+    </main>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
