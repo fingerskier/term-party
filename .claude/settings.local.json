@@ -3,7 +3,13 @@
     "allow": [
       "mcp__plugin_dude_dude__list_records",
       "mcp__plugin_dude_dude__upsert_record",
-      "mcp__plugin_dude_dude__list_projects"
+      "mcp__plugin_dude_dude__list_projects",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd favicon, terminal persistence, paste/drop support\n\n- Install RealFaviconGenerator favicon set \\(SVG, PNG, ICO, manifest\\)\n  with relative paths for Electron file:// compatibility\n- Persist terminal sessions to disk and restore as ghost entries\n- Add Ctrl+V paste and drag-and-drop file/text support to terminals\n- Add ghost terminal styling in sidebar\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
