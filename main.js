@@ -1,11 +1,42 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const pty = require('node-pty');
 const os = require('os');
 
 let mainWindow;
 const terminals = new Map(); // id -> { pty, cwd, title }
 let nextId = 1;
+let savedTerminals = []; // array of { cwd, title } — ghost entries not yet activated
+
+function getSavePath() {
+  return path.join(app.getPath('userData'), 'terminals.json');
+}
+
+function loadSavedTerminals() {
+  try {
+    const data = fs.readFileSync(getSavePath(), 'utf-8');
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistTerminals() {
+  const entries = [];
+  for (const [, term] of terminals) {
+    entries.push({ cwd: term.cwd, title: term.title });
+  }
+  for (const ghost of savedTerminals) {
+    entries.push({ cwd: ghost.cwd, title: ghost.title });
+  }
+  try {
+    fs.writeFileSync(getSavePath(), JSON.stringify(entries, null, 2));
+  } catch {
+    // best-effort persistence
+  }
+}
 
 function getShell() {
   return process.platform === 'win32'
@@ -27,9 +58,13 @@ function createWindow() {
   mainWindow.loadFile('index.html');
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  savedTerminals = loadSavedTerminals();
+});
 
 app.on('window-all-closed', () => {
+  persistTerminals();
   for (const [, term] of terminals) {
     term.pty.kill();
   }
@@ -74,6 +109,7 @@ ipcMain.handle('create-terminal', (_event, cwd) => {
   });
 
   terminals.set(id, { pty: ptyProcess, cwd, title });
+  persistTerminals();
   return { id, cwd, title };
 });
 
@@ -92,6 +128,7 @@ ipcMain.handle('kill-terminal', (_event, id) => {
   if (term) {
     term.pty.kill();
     terminals.delete(id);
+    persistTerminals();
   }
   return true;
 });
@@ -99,7 +136,18 @@ ipcMain.handle('kill-terminal', (_event, id) => {
 ipcMain.handle('get-terminals', () => {
   const list = [];
   for (const [id, term] of terminals) {
-    list.push({ id, cwd: term.cwd, title: term.title });
+    list.push({ id, cwd: term.cwd, title: term.title, ghost: false });
   }
+  savedTerminals.forEach((ghost, i) => {
+    list.push({ id: `ghost-${i}`, cwd: ghost.cwd, title: ghost.title, ghost: true });
+  });
   return list;
+});
+
+ipcMain.handle('remove-saved-terminal', (_event, index) => {
+  if (index >= 0 && index < savedTerminals.length) {
+    savedTerminals.splice(index, 1);
+    persistTerminals();
+  }
+  return true;
 });

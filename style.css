@@ -105,6 +105,11 @@ html, body {
   color: #eba0ac;
 }
 
+#terminal-list li.ghost .term-title {
+  opacity: 0.5;
+  font-style: italic;
+}
+
 /* --- Viewer --- */
 
 #viewer {
