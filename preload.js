@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('termParty', {
   killTerminal: (id) => ipcRenderer.invoke('kill-terminal', id),
   getTerminals: () => ipcRenderer.invoke('get-terminals'),
   removeSavedTerminal: (index) => ipcRenderer.invoke('remove-saved-terminal', index),
+  renameTerminal: (id, newTitle) => ipcRenderer.invoke('rename-terminal', { id, newTitle }),
+
+  getFavorites: () => ipcRenderer.invoke('get-favorites'),
+  addFavorite: (name, cwd) => ipcRenderer.invoke('add-favorite', { name, cwd }),
+  removeFavorite: (index) => ipcRenderer.invoke('remove-favorite', index),
 
   sendInput: (id, data) => ipcRenderer.send('terminal-input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('terminal-resize', { id, cols, rows }),

@@ -110,6 +110,97 @@ html, body {
   font-style: italic;
 }
 
+/* --- Favorites --- */
+
+#favorites-section {
+  border-bottom: 1px solid #313244;
+  padding-bottom: 8px;
+}
+
+#favorites-heading {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #f9e2af;
+  padding: 0 4px 4px;
+}
+
+#favorites-list {
+  list-style: none;
+}
+
+#favorites-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+#favorites-list li:hover {
+  background: #313244;
+}
+
+#favorites-list li .fav-name {
+  color: #f9e2af;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+#favorites-list li .fav-remove-btn {
+  background: none;
+  border: none;
+  color: #f38ba8;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 4px;
+  margin-left: 6px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+#favorites-list li:hover .fav-remove-btn {
+  opacity: 1;
+}
+
+#favorites-list li .fav-remove-btn:hover {
+  color: #eba0ac;
+}
+
+/* Star button on terminal list items */
+#terminal-list li .star-btn {
+  background: none;
+  border: none;
+  color: #585b70;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  margin-left: 4px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+#terminal-list li:hover .star-btn {
+  opacity: 1;
+}
+
+#terminal-list li .star-btn.is-favorite {
+  opacity: 1;
+  color: #f9e2af;
+}
+
+#terminal-list li .star-btn:hover {
+  color: #f9e2af;
+}
+
 /* --- Viewer --- */
 
 #viewer {
@@ -137,4 +228,44 @@ html, body {
 #terminal-container .xterm {
   height: 100%;
   padding: 8px;
+}
+
+/* --- Context menu --- */
+
+.ctx-menu {
+  position: fixed;
+  background: #313244;
+  border: 1px solid #45475a;
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 120px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 9999;
+}
+
+.ctx-menu-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #cdd6f4;
+  transition: background 0.1s;
+}
+
+.ctx-menu-item:hover {
+  background: #45475a;
+}
+
+/* --- Inline rename input --- */
+
+.rename-input {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid #cba6f7;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  flex: 1;
+  min-width: 0;
 }

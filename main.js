@@ -8,6 +8,7 @@ let mainWindow;
 const terminals = new Map(); // id -> { pty, cwd, title }
 let nextId = 1;
 let savedTerminals = []; // array of { cwd, title } — ghost entries not yet activated
+let favorites = []; // array of { name, cwd }
 
 function getSavePath() {
   return path.join(app.getPath('userData'), 'terminals.json');
@@ -38,6 +39,28 @@ function persistTerminals() {
   }
 }
 
+function getFavoritesPath() {
+  return path.join(app.getPath('userData'), 'favorites.json');
+}
+
+function loadFavorites() {
+  try {
+    const data = fs.readFileSync(getFavoritesPath(), 'utf-8');
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistFavorites() {
+  try {
+    fs.writeFileSync(getFavoritesPath(), JSON.stringify(favorites, null, 2));
+  } catch {
+    // best-effort persistence
+  }
+}
+
 function getShell() {
   return process.platform === 'win32'
     ? 'powershell.exe'
@@ -61,6 +84,7 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
   savedTerminals = loadSavedTerminals();
+  favorites = loadFavorites();
 });
 
 app.on('window-all-closed', () => {
@@ -148,6 +172,44 @@ ipcMain.handle('remove-saved-terminal', (_event, index) => {
   if (index >= 0 && index < savedTerminals.length) {
     savedTerminals.splice(index, 1);
     persistTerminals();
+  }
+  return true;
+});
+
+ipcMain.handle('rename-terminal', (_event, { id, newTitle }) => {
+  if (typeof id === 'string' && id.startsWith('ghost-')) {
+    const index = parseInt(id.replace('ghost-', ''), 10);
+    if (index >= 0 && index < savedTerminals.length) {
+      savedTerminals[index].title = newTitle;
+      persistTerminals();
+    }
+  } else {
+    const term = terminals.get(id);
+    if (term) {
+      term.title = newTitle;
+      persistTerminals();
+    }
+  }
+  return true;
+});
+
+// --- Favorites IPC ---
+
+ipcMain.handle('get-favorites', () => {
+  return favorites.map((f, i) => ({ index: i, name: f.name, cwd: f.cwd }));
+});
+
+ipcMain.handle('add-favorite', (_event, { name, cwd }) => {
+  if (favorites.some(f => f.cwd === cwd)) return false;
+  favorites.push({ name, cwd });
+  persistFavorites();
+  return true;
+});
+
+ipcMain.handle('remove-favorite', (_event, index) => {
+  if (index >= 0 && index < favorites.length) {
+    favorites.splice(index, 1);
+    persistFavorites();
   }
   return true;
 });

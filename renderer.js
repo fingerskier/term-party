@@ -5,10 +5,63 @@ const terminalListEl = document.getElementById('terminal-list');
 const containerEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
 const addBtn = document.getElementById('add-terminal');
+const favoritesSectionEl = document.getElementById('favorites-section');
+const favoritesListEl = document.getElementById('favorites-list');
 
 // Map of id -> { xterm, fitAddon, wrapper, opened }
 const termViews = new Map();
 let activeId = null;
+let currentFavorites = [];
+
+// ---- Context menu ----
+
+const ctxMenu = document.createElement('div');
+ctxMenu.className = 'ctx-menu';
+ctxMenu.style.display = 'none';
+document.body.appendChild(ctxMenu);
+
+document.addEventListener('click', () => {
+  ctxMenu.style.display = 'none';
+});
+
+function startInlineRename(li, termId, titleSpan) {
+  const original = titleSpan.textContent;
+  titleSpan.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.className = 'rename-input';
+  input.value = original;
+  li.insertBefore(input, titleSpan.nextSibling);
+  input.focus();
+  input.select();
+
+  let committed = false;
+  function commit() {
+    if (committed) return;
+    committed = true;
+    const newName = input.value.trim();
+    input.remove();
+    titleSpan.style.display = '';
+    if (newName && newName !== original) {
+      titleSpan.textContent = newName;
+      window.termParty.renameTerminal(termId, newName);
+    }
+  }
+  function cancel() {
+    if (committed) return;
+    committed = true;
+    input.remove();
+    titleSpan.style.display = '';
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', commit);
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
 
 function getTerminalIds() {
   return [...terminalListEl.querySelectorAll('li:not(.ghost)')]
@@ -53,14 +106,104 @@ function renderList(terminals) {
       li.addEventListener('click', () => activateTerminal(t.id));
     }
 
+    // Star button for non-ghost terminals
+    if (!t.ghost) {
+      const isFav = currentFavorites.some(f => f.cwd === t.cwd);
+      const starBtn = document.createElement('button');
+      starBtn.className = 'star-btn' + (isFav ? ' is-favorite' : '');
+      starBtn.textContent = isFav ? '\u2605' : '\u2606';
+      starBtn.title = isFav ? 'Remove from favorites' : 'Add to favorites';
+      starBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFavorite(t.title, t.cwd, isFav);
+      });
+      li.appendChild(starBtn);
+    }
+
     li.appendChild(killBtn);
+
+    li.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      ctxMenu.innerHTML = '';
+      const renameItem = document.createElement('div');
+      renameItem.className = 'ctx-menu-item';
+      renameItem.textContent = 'Rename';
+      renameItem.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        ctxMenu.style.display = 'none';
+        startInlineRename(li, t.id, title);
+      });
+      ctxMenu.appendChild(renameItem);
+      ctxMenu.style.left = e.clientX + 'px';
+      ctxMenu.style.top = e.clientY + 'px';
+      ctxMenu.style.display = '';
+    });
+
     terminalListEl.appendChild(li);
   }
 }
 
 async function refreshList() {
+  await loadAndRenderFavorites();
   const terminals = await window.termParty.getTerminals();
   renderList(terminals);
+}
+
+// ---- Favorites ----
+
+async function loadAndRenderFavorites() {
+  currentFavorites = await window.termParty.getFavorites();
+  renderFavorites(currentFavorites);
+}
+
+function renderFavorites(favorites) {
+  favoritesListEl.innerHTML = '';
+  favoritesSectionEl.style.display = favorites.length ? '' : 'none';
+
+  for (const fav of favorites) {
+    const li = document.createElement('li');
+
+    const name = document.createElement('span');
+    name.className = 'fav-name';
+    name.textContent = fav.name;
+    name.title = fav.cwd;
+    li.appendChild(name);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'fav-remove-btn';
+    removeBtn.textContent = '\u00d7';
+    removeBtn.title = 'Remove favorite';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeFavorite(fav.index);
+    });
+    li.appendChild(removeBtn);
+
+    li.addEventListener('click', () => spawnFromFavorite(fav.cwd));
+    favoritesListEl.appendChild(li);
+  }
+}
+
+async function spawnFromFavorite(cwd) {
+  const info = await window.termParty.createTerminal(cwd);
+  activateTerminal(info.id);
+  refreshList();
+}
+
+async function removeFavorite(index) {
+  await window.termParty.removeFavorite(index);
+  refreshList();
+}
+
+async function toggleFavorite(name, cwd, isFav) {
+  if (isFav) {
+    const idx = currentFavorites.findIndex(f => f.cwd === cwd);
+    if (idx >= 0) await window.termParty.removeFavorite(currentFavorites[idx].index);
+  } else {
+    await window.termParty.addFavorite(name, cwd);
+  }
+  refreshList();
 }
 
 // ---- Terminal views ----
