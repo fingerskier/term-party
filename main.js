@@ -67,11 +67,18 @@ function getShell() {
     : process.env.SHELL || '/bin/bash';
 }
 
+function getAppIcon() {
+  if (process.platform === 'win32') {
+    return path.join(__dirname, 'favicon.ico');
+  }
+  return path.join(__dirname, 'icon.icns');
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
-    icon: path.join(__dirname, 'icon.icns'),
+    icon: getAppIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -4,12 +4,49 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* Backgrounds */
+  --bg-deep: #08080c;
+  --bg-base: #0c0c12;
+  --bg-surface: #14141e;
+  --bg-elevated: #1a1a28;
+
+  /* Text */
+  --text-primary: #c8ccd8;
+  --text-secondary: #585868;
+  --text-ghost: #3a3a4a;
+
+  /* Accents */
+  --accent-primary: #c8ff00;
+  --accent-purple: #a855f7;
+  --accent-glow: rgba(200, 255, 0, 0.12);
+  --accent-purple-glow: rgba(168, 85, 247, 0.15);
+
+  /* Danger */
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+
+  /* Borders */
+  --border-subtle: #1e1e2e;
+  --border-active: #2a2a3a;
+
+  /* Typography */
+  --font-mono: "Fira Code", "Cascadia Code", "JetBrains Mono", "SF Mono", Menlo, monospace;
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
 html, body {
   height: 100%;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  background: var(--bg-deep);
+  color: var(--text-primary);
 }
 
 #app {
@@ -22,8 +59,8 @@ html, body {
 #sidebar {
   width: 240px;
   min-width: 240px;
-  background: #181825;
-  border-right: 1px solid #313244;
+  background: var(--bg-base);
+  border-right: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   padding: 12px;
@@ -31,25 +68,31 @@ html, body {
 }
 
 #sidebar h1 {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
-  color: #cba6f7;
+  color: var(--accent-purple);
   padding: 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
 #add-terminal {
-  background: #313244;
-  color: #cdd6f4;
-  border: 1px solid #45475a;
-  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--accent-primary);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   cursor: pointer;
-  font-size: 13px;
-  transition: background 0.15s;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transition: background 0.15s, box-shadow 0.15s;
 }
 
 #add-terminal:hover {
-  background: #45475a;
+  background: var(--bg-elevated);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 
 #terminal-list {
@@ -63,18 +106,21 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
+  border-left: 2px solid transparent;
   cursor: pointer;
   font-size: 13px;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
 #terminal-list li:hover {
-  background: #313244;
+  background: var(--bg-surface);
 }
 
 #terminal-list li.active {
-  background: #45475a;
+  background: var(--bg-elevated);
+  border-left: 2px solid var(--accent-primary);
+  box-shadow: inset 4px 0 8px rgba(200, 255, 0, 0.06);
 }
 
 #terminal-list li .term-title {
@@ -87,7 +133,7 @@ html, body {
 #terminal-list li .kill-btn {
   background: none;
   border: none;
-  color: #f38ba8;
+  color: var(--danger);
   cursor: pointer;
   font-size: 15px;
   padding: 0 4px;
@@ -102,7 +148,7 @@ html, body {
 }
 
 #terminal-list li .kill-btn:hover {
-  color: #eba0ac;
+  color: var(--danger-hover);
 }
 
 #terminal-list li.ghost .term-title {
@@ -113,18 +159,22 @@ html, body {
 /* --- Favorites trigger button --- */
 
 #open-favorites {
-  background: #313244;
-  color: #f9e2af;
-  border: 1px solid #45475a;
-  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--accent-primary);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   cursor: pointer;
-  font-size: 13px;
-  transition: background 0.15s;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  transition: background 0.15s, box-shadow 0.15s;
 }
 
 #open-favorites:hover {
-  background: #45475a;
+  background: var(--bg-elevated);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 
 /* --- Favorites modal --- */
@@ -132,7 +182,7 @@ html, body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -140,14 +190,14 @@ html, body {
 }
 
 .modal-content {
-  background: #1e1e2e;
-  border: 1px solid #45475a;
-  border-radius: 10px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-lg);
   width: 420px;
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 .modal-header {
@@ -155,7 +205,7 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px 12px;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .modal-header h2 {
@@ -163,14 +213,14 @@ html, body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #f9e2af;
+  color: var(--accent-primary);
   margin: 0;
 }
 
 .modal-close-btn {
   background: none;
   border: none;
-  color: #585b70;
+  color: var(--text-secondary);
   font-size: 20px;
   cursor: pointer;
   line-height: 1;
@@ -179,7 +229,7 @@ html, body {
 }
 
 .modal-close-btn:hover {
-  color: #f38ba8;
+  color: var(--danger);
 }
 
 .modal-favorites-list {
@@ -194,18 +244,18 @@ html, body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 13px;
   transition: background 0.15s;
 }
 
 .modal-favorites-list li:hover {
-  background: #313244;
+  background: var(--bg-surface);
 }
 
 .modal-favorites-list li .fav-name {
-  color: #f9e2af;
+  color: var(--accent-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -213,7 +263,7 @@ html, body {
 }
 
 .modal-favorites-list li .fav-cwd {
-  color: #585b70;
+  color: var(--text-secondary);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -225,7 +275,7 @@ html, body {
 .modal-favorites-list li .fav-remove-btn {
   background: none;
   border: none;
-  color: #f38ba8;
+  color: var(--danger);
   cursor: pointer;
   font-size: 15px;
   padding: 0 4px;
@@ -241,21 +291,23 @@ html, body {
 }
 
 .modal-favorites-list li .fav-remove-btn:hover {
-  color: #eba0ac;
+  color: var(--danger-hover);
 }
 
 .modal-empty {
   padding: 24px 20px;
   text-align: center;
-  color: #585b70;
-  font-size: 13px;
+  color: var(--text-ghost);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 /* Star button on terminal list items */
 #terminal-list li .star-btn {
   background: none;
   border: none;
-  color: #585b70;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
   padding: 0 2px;
@@ -271,11 +323,11 @@ html, body {
 
 #terminal-list li .star-btn.is-favorite {
   opacity: 1;
-  color: #f9e2af;
+  color: var(--accent-primary);
 }
 
 #terminal-list li .star-btn:hover {
-  color: #f9e2af;
+  color: var(--accent-primary);
 }
 
 /* --- Viewer --- */
@@ -284,7 +336,7 @@ html, body {
   flex: 1;
   display: flex;
   position: relative;
-  background: #1e1e2e;
+  background: var(--bg-deep);
 }
 
 #empty-state {
@@ -293,8 +345,10 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #585b70;
-  font-size: 14px;
+  color: var(--text-ghost);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 #terminal-container {
@@ -311,12 +365,12 @@ html, body {
 
 .ctx-menu {
   position: fixed;
-  background: #313244;
-  border: 1px solid #45475a;
-  border-radius: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-md);
   padding: 4px 0;
   min-width: 120px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   z-index: 9999;
 }
 
@@ -324,25 +378,51 @@ html, body {
   padding: 6px 14px;
   font-size: 13px;
   cursor: pointer;
-  color: #cdd6f4;
+  color: var(--text-primary);
   transition: background 0.1s;
 }
 
 .ctx-menu-item:hover {
-  background: #45475a;
+  background: var(--bg-elevated);
 }
 
 /* --- Inline rename input --- */
 
 .rename-input {
-  background: #1e1e2e;
-  color: #cdd6f4;
-  border: 1px solid #cba6f7;
-  border-radius: 4px;
+  background: var(--bg-deep);
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: var(--radius-sm);
   padding: 2px 6px;
   font-size: 13px;
-  font-family: inherit;
+  font-family: var(--font-mono);
   outline: none;
   flex: 1;
   min-width: 0;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+/* --- Custom scrollbar --- */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-active);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* --- xterm viewport background override --- */
+
+#terminal-container .xterm .xterm-viewport {
+  background-color: var(--bg-deep) !important;
 }

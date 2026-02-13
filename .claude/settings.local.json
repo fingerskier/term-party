@@ -14,7 +14,10 @@
       "Bash(sips:*)",
       "Bash(iconutil:*)",
       "mcp__dude__upsert_record",
-      "Bash(git -C /Users/fingerskier/dev/fingerskier/term-party log --oneline --all icon.icns)"
+      "Bash(git -C /Users/fingerskier/dev/fingerskier/term-party log --oneline --all icon.icns)",
+      "Bash(dir:*)",
+      "Bash(git -C \"C:\\\\dev\\\\fingerskier\\\\agent\\\\term-party\" diff HEAD -- main.js)",
+      "Bash(git -C \"C:\\\\dev\\\\fingerskier\\\\agent\\\\term-party\" diff -- renderer.js style.css)"
     ]
   }
 }
