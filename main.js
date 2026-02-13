@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const pty = require('node-pty');
@@ -71,6 +71,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: path.join(__dirname, 'icon.icns'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -82,6 +83,14 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      const icon = nativeImage.createFromPath(path.join(__dirname, 'web-app-manifest-512x512.png'));
+      app.dock.setIcon(icon);
+    } catch (e) {
+      console.warn('Failed to set dock icon:', e.message);
+    }
+  }
   createWindow();
   savedTerminals = loadSavedTerminals();
   favorites = loadFavorites();
