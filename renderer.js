@@ -5,13 +5,16 @@ const terminalListEl = document.getElementById('terminal-list');
 const containerEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
 const addBtn = document.getElementById('add-terminal');
-const favoritesSectionEl = document.getElementById('favorites-section');
+const favoritesModalEl = document.getElementById('favorites-modal');
 const favoritesListEl = document.getElementById('favorites-list');
+const favoritesEmptyEl = document.getElementById('favorites-empty');
+const openFavoritesBtn = document.getElementById('open-favorites');
 
 // Map of id -> { xterm, fitAddon, wrapper, opened }
 const termViews = new Map();
 let activeId = null;
 let currentFavorites = [];
+let favoriteCwds = new Set();
 
 // ---- Context menu ----
 
@@ -23,6 +26,27 @@ document.body.appendChild(ctxMenu);
 document.addEventListener('click', () => {
   ctxMenu.style.display = 'none';
 });
+
+// ---- Favorites modal ----
+
+function openFavoritesModal() {
+  renderFavorites(currentFavorites);
+  favoritesModalEl.style.display = '';
+}
+
+function closeFavoritesModal() {
+  favoritesModalEl.style.display = 'none';
+}
+
+openFavoritesBtn.addEventListener('click', openFavoritesModal);
+
+favoritesModalEl.addEventListener('click', (e) => {
+  if (e.target === favoritesModalEl) {
+    closeFavoritesModal();
+  }
+});
+
+favoritesModalEl.querySelector('.modal-close-btn').addEventListener('click', closeFavoritesModal);
 
 function startInlineRename(li, termId, titleSpan) {
   const original = titleSpan.textContent;
@@ -108,7 +132,7 @@ function renderList(terminals) {
 
     // Star button for non-ghost terminals
     if (!t.ghost) {
-      const isFav = currentFavorites.some(f => f.cwd === t.cwd);
+      const isFav = favoriteCwds.has(t.cwd);
       const starBtn = document.createElement('button');
       starBtn.className = 'star-btn' + (isFav ? ' is-favorite' : '');
       starBtn.textContent = isFav ? '\u2605' : '\u2606';
@@ -154,12 +178,18 @@ async function refreshList() {
 
 async function loadAndRenderFavorites() {
   currentFavorites = await window.termParty.getFavorites();
+  favoriteCwds = new Set(currentFavorites.map(f => f.cwd));
   renderFavorites(currentFavorites);
 }
 
 function renderFavorites(favorites) {
   favoritesListEl.innerHTML = '';
-  favoritesSectionEl.style.display = favorites.length ? '' : 'none';
+
+  if (favorites.length === 0) {
+    favoritesEmptyEl.style.display = '';
+    return;
+  }
+  favoritesEmptyEl.style.display = 'none';
 
   for (const fav of favorites) {
     const li = document.createElement('li');
@@ -167,8 +197,13 @@ function renderFavorites(favorites) {
     const name = document.createElement('span');
     name.className = 'fav-name';
     name.textContent = fav.name;
-    name.title = fav.cwd;
     li.appendChild(name);
+
+    const cwdSpan = document.createElement('span');
+    cwdSpan.className = 'fav-cwd';
+    cwdSpan.textContent = fav.cwd;
+    cwdSpan.title = fav.cwd;
+    li.appendChild(cwdSpan);
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'fav-remove-btn';
@@ -176,11 +211,15 @@ function renderFavorites(favorites) {
     removeBtn.title = 'Remove favorite';
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      removeFavorite(fav.index);
+      removeFavorite(fav.cwd);
     });
     li.appendChild(removeBtn);
 
-    li.addEventListener('click', () => spawnFromFavorite(fav.cwd));
+    li.addEventListener('click', () => {
+      closeFavoritesModal();
+      spawnFromFavorite(fav.cwd);
+    });
+
     favoritesListEl.appendChild(li);
   }
 }
@@ -191,19 +230,41 @@ async function spawnFromFavorite(cwd) {
   refreshList();
 }
 
-async function removeFavorite(index) {
-  await window.termParty.removeFavorite(index);
+async function removeFavorite(cwd) {
+  await window.termParty.removeFavorite(cwd);
   refreshList();
 }
 
 async function toggleFavorite(name, cwd, isFav) {
+  // Optimistic UI update
   if (isFav) {
-    const idx = currentFavorites.findIndex(f => f.cwd === cwd);
-    if (idx >= 0) await window.termParty.removeFavorite(currentFavorites[idx].index);
+    favoriteCwds.delete(cwd);
+    currentFavorites = currentFavorites.filter(f => f.cwd !== cwd);
   } else {
-    await window.termParty.addFavorite(name, cwd);
+    favoriteCwds.add(cwd);
+    currentFavorites.push({ name, cwd });
   }
-  refreshList();
+
+  // Re-render immediately with optimistic state
+  renderFavorites(currentFavorites);
+  const terminals = await window.termParty.getTerminals();
+  renderList(terminals);
+
+  // Fire IPC then reconcile with backend state
+  try {
+    if (isFav) {
+      await window.termParty.removeFavorite(cwd);
+    } else {
+      await window.termParty.addFavorite(name, cwd);
+    }
+  } catch {
+    // on failure, reconciliation below will correct the UI
+  }
+
+  // Reconcile from authoritative backend
+  await loadAndRenderFavorites();
+  const termsFinal = await window.termParty.getTerminals();
+  renderList(termsFinal);
 }
 
 // ---- Terminal views ----
@@ -404,6 +465,11 @@ window.addEventListener('resize', () => {
 // ---- Keyboard shortcuts ----
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && favoritesModalEl.style.display !== 'none') {
+    closeFavoritesModal();
+    return;
+  }
+
   if (!e.ctrlKey) return;
   if (e.key !== 'PageUp' && e.key !== 'PageDown') return;
 

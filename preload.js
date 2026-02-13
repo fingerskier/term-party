@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('termParty', {
 
   getFavorites: () => ipcRenderer.invoke('get-favorites'),
   addFavorite: (name, cwd) => ipcRenderer.invoke('add-favorite', { name, cwd }),
-  removeFavorite: (index) => ipcRenderer.invoke('remove-favorite', index),
+  removeFavorite: (cwd) => ipcRenderer.invoke('remove-favorite', cwd),
 
   sendInput: (id, data) => ipcRenderer.send('terminal-input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('terminal-resize', { id, cols, rows }),

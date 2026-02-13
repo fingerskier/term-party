@@ -24,7 +24,7 @@ function loadSavedTerminals() {
   }
 }
 
-function persistTerminals() {
+async function persistTerminals() {
   const entries = [];
   for (const [, term] of terminals) {
     entries.push({ cwd: term.cwd, title: term.title });
@@ -33,7 +33,7 @@ function persistTerminals() {
     entries.push({ cwd: ghost.cwd, title: ghost.title });
   }
   try {
-    fs.writeFileSync(getSavePath(), JSON.stringify(entries, null, 2));
+    await fs.promises.writeFile(getSavePath(), JSON.stringify(entries, null, 2));
   } catch {
     // best-effort persistence
   }
@@ -53,9 +53,9 @@ function loadFavorites() {
   }
 }
 
-function persistFavorites() {
+async function persistFavorites() {
   try {
-    fs.writeFileSync(getFavoritesPath(), JSON.stringify(favorites, null, 2));
+    await fs.promises.writeFile(getFavoritesPath(), JSON.stringify(favorites, null, 2));
   } catch {
     // best-effort persistence
   }
@@ -87,8 +87,8 @@ app.whenReady().then(() => {
   favorites = loadFavorites();
 });
 
-app.on('window-all-closed', () => {
-  persistTerminals();
+app.on('window-all-closed', async () => {
+  await persistTerminals();
   for (const [, term] of terminals) {
     term.pty.kill();
   }
@@ -196,7 +196,7 @@ ipcMain.handle('rename-terminal', (_event, { id, newTitle }) => {
 // --- Favorites IPC ---
 
 ipcMain.handle('get-favorites', () => {
-  return favorites.map((f, i) => ({ index: i, name: f.name, cwd: f.cwd }));
+  return favorites.map(f => ({ name: f.name, cwd: f.cwd }));
 });
 
 ipcMain.handle('add-favorite', (_event, { name, cwd }) => {
@@ -206,9 +206,10 @@ ipcMain.handle('add-favorite', (_event, { name, cwd }) => {
   return true;
 });
 
-ipcMain.handle('remove-favorite', (_event, index) => {
-  if (index >= 0 && index < favorites.length) {
-    favorites.splice(index, 1);
+ipcMain.handle('remove-favorite', (_event, cwd) => {
+  const before = favorites.length;
+  favorites = favorites.filter(f => f.cwd !== cwd);
+  if (favorites.length !== before) {
     persistFavorites();
   }
   return true;
