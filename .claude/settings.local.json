@@ -17,7 +17,20 @@
       "Bash(git -C /Users/fingerskier/dev/fingerskier/term-party log --oneline --all icon.icns)",
       "Bash(dir:*)",
       "Bash(git -C \"C:\\\\dev\\\\fingerskier\\\\agent\\\\term-party\" diff HEAD -- main.js)",
-      "Bash(git -C \"C:\\\\dev\\\\fingerskier\\\\agent\\\\term-party\" diff -- renderer.js style.css)"
+      "Bash(git -C \"C:\\\\dev\\\\fingerskier\\\\agent\\\\term-party\" diff -- renderer.js style.css)",
+      "Bash(npm install:*)",
+      "Bash(npm run build:win:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(node -e:*)",
+      "Bash(node:*)",
+      "Bash(npm ls:*)",
+      "Bash(git -C \"C:\\\\dev\\\\fingerskier\\\\agent\\\\term-party\" log --oneline --all -20)",
+      "Bash(npm view:*)",
+      "Bash(npm config:*)",
+      "mcp__plugin_dude_dude__search",
+      "Bash(magick:*)",
+      "Bash(npx:*)"
     ]
   }
 }

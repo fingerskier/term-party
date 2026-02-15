@@ -5,14 +5,17 @@ const terminalListEl = document.getElementById('terminal-list');
 const containerEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
 const addBtn = document.getElementById('add-terminal');
-const favoritesModalEl = document.getElementById('favorites-modal');
-const favoritesListEl = document.getElementById('favorites-list');
-const favoritesEmptyEl = document.getElementById('favorites-empty');
 const openFavoritesBtn = document.getElementById('open-favorites');
+const openScratchpadBtn = document.getElementById('open-scratchpad');
+const appTitleEl = document.getElementById('app-title');
+const viewerEl = document.getElementById('viewer');
 
 // Map of id -> { xterm, fitAddon, wrapper, opened }
 const termViews = new Map();
-let activeId = null;
+// Map of string -> { wrapper, onActivate?, onDeactivate? }
+const specialViews = new Map();
+
+let activeViewId = null; // number (terminal) or string ('dashboard', 'favorites', 'scratchpad')
 let currentFavorites = [];
 let favoriteCwds = new Set();
 
@@ -27,26 +30,119 @@ document.addEventListener('click', () => {
   ctxMenu.style.display = 'none';
 });
 
-// ---- Favorites modal ----
+// ---- Special view system ----
 
-function openFavoritesModal() {
-  renderFavorites(currentFavorites);
-  favoritesModalEl.style.display = '';
+function registerSpecialView(id, { buildFn, onActivate, onDeactivate }) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'view-panel';
+  wrapper.dataset.viewId = id;
+  viewerEl.appendChild(wrapper);
+
+  let built = false;
+  const view = {
+    wrapper,
+    onActivate: () => {
+      if (!built) {
+        buildFn(wrapper);
+        built = true;
+      }
+      if (onActivate) onActivate(wrapper);
+    },
+    onDeactivate: onDeactivate || null,
+  };
+  specialViews.set(id, view);
 }
 
-function closeFavoritesModal() {
-  favoritesModalEl.style.display = 'none';
-}
+function activateView(viewId) {
+  if (activeViewId === viewId) return;
 
-openFavoritesBtn.addEventListener('click', openFavoritesModal);
-
-favoritesModalEl.addEventListener('click', (e) => {
-  if (e.target === favoritesModalEl) {
-    closeFavoritesModal();
+  // Deactivate previous view
+  if (activeViewId !== null) {
+    if (typeof activeViewId === 'number') {
+      const prev = termViews.get(activeViewId);
+      if (prev) prev.wrapper.style.display = 'none';
+    } else {
+      const prev = specialViews.get(activeViewId);
+      if (prev) {
+        prev.wrapper.classList.remove('active');
+        if (prev.onDeactivate) prev.onDeactivate(prev.wrapper);
+      }
+    }
   }
-});
 
-favoritesModalEl.querySelector('.modal-close-btn').addEventListener('click', closeFavoritesModal);
+  // Hide empty state and terminal container when showing special views
+  if (typeof viewId === 'string') {
+    emptyStateEl.style.display = 'none';
+    containerEl.style.display = 'none';
+    const view = specialViews.get(viewId);
+    if (view) {
+      view.wrapper.classList.add('active');
+      view.onActivate(view.wrapper);
+    }
+  } else {
+    containerEl.style.display = '';
+  }
+
+  activeViewId = viewId;
+  updateSidebarActiveStates();
+}
+
+function activateTerminal(id) {
+  // If coming from a special view, hide it first
+  if (typeof activeViewId === 'string') {
+    const prev = specialViews.get(activeViewId);
+    if (prev) {
+      prev.wrapper.classList.remove('active');
+      if (prev.onDeactivate) prev.onDeactivate(prev.wrapper);
+    }
+    containerEl.style.display = '';
+  }
+
+  if (activeViewId === id) return;
+
+  // Hide previous terminal wrapper
+  if (typeof activeViewId === 'number') {
+    const prev = termViews.get(activeViewId);
+    if (prev) prev.wrapper.style.display = 'none';
+  }
+
+  activeViewId = id;
+  emptyStateEl.style.display = 'none';
+
+  let view = termViews.get(id);
+  if (!view) {
+    createTermView(id);
+    view = termViews.get(id);
+  }
+
+  view.wrapper.style.display = '';
+  if (!view.opened) {
+    view.xterm.open(view.wrapper);
+    view.opened = true;
+  }
+  view.fitAddon.fit();
+  view.xterm.focus();
+
+  window.termParty.resize(id, view.xterm.cols, view.xterm.rows);
+  updateSidebarActiveStates();
+  refreshList();
+}
+
+function updateSidebarActiveStates() {
+  // Sidebar buttons
+  openFavoritesBtn.classList.toggle('active', activeViewId === 'favorites');
+  openScratchpadBtn.classList.toggle('active', activeViewId === 'scratchpad');
+
+  // Terminal list items
+  for (const li of terminalListEl.querySelectorAll('li')) {
+    const liId = li.dataset.id;
+    if (liId && !li.classList.contains('ghost')) {
+      li.classList.toggle('active', Number(liId) === activeViewId);
+    }
+  }
+}
+
+// ---- Sidebar rendering ----
 
 function startInlineRename(li, termId, titleSpan) {
   const original = titleSpan.textContent;
@@ -92,13 +188,11 @@ function getTerminalIds() {
     .map(li => Number(li.dataset.id));
 }
 
-// ---- Sidebar rendering ----
-
 function renderList(terminals) {
   terminalListEl.innerHTML = '';
   for (const t of terminals) {
     const li = document.createElement('li');
-    li.classList.toggle('active', t.id === activeId);
+    li.classList.toggle('active', t.id === activeViewId);
     li.dataset.id = t.id;
 
     if (t.ghost) {
@@ -179,19 +273,21 @@ async function refreshList() {
 async function loadAndRenderFavorites() {
   currentFavorites = await window.termParty.getFavorites();
   favoriteCwds = new Set(currentFavorites.map(f => f.cwd));
-  renderFavorites(currentFavorites);
 }
 
-function renderFavorites(favorites) {
-  favoritesListEl.innerHTML = '';
+function renderFavoritesPanel(container) {
+  const listEl = container.querySelector('.fav-list');
+  const emptyEl = container.querySelector('.panel-empty');
+  if (!listEl || !emptyEl) return;
 
-  if (favorites.length === 0) {
-    favoritesEmptyEl.style.display = '';
+  listEl.innerHTML = '';
+  if (currentFavorites.length === 0) {
+    emptyEl.style.display = '';
     return;
   }
-  favoritesEmptyEl.style.display = 'none';
+  emptyEl.style.display = 'none';
 
-  for (const fav of favorites) {
+  for (const fav of currentFavorites) {
     const li = document.createElement('li');
 
     const name = document.createElement('span');
@@ -216,11 +312,10 @@ function renderFavorites(favorites) {
     li.appendChild(removeBtn);
 
     li.addEventListener('click', () => {
-      closeFavoritesModal();
       spawnFromFavorite(fav.cwd);
     });
 
-    favoritesListEl.appendChild(li);
+    listEl.appendChild(li);
   }
 }
 
@@ -233,6 +328,11 @@ async function spawnFromFavorite(cwd) {
 async function removeFavorite(cwd) {
   await window.termParty.removeFavorite(cwd);
   refreshList();
+  // Re-render favorites panel if it's the active view
+  if (activeViewId === 'favorites') {
+    const view = specialViews.get('favorites');
+    if (view) renderFavoritesPanel(view.wrapper);
+  }
 }
 
 async function toggleFavorite(name, cwd, isFav) {
@@ -245,12 +345,9 @@ async function toggleFavorite(name, cwd, isFav) {
     currentFavorites.push({ name, cwd });
   }
 
-  // Re-render immediately with optimistic state
-  renderFavorites(currentFavorites);
   const terminals = await window.termParty.getTerminals();
   renderList(terminals);
 
-  // Fire IPC then reconcile with backend state
   try {
     if (isFav) {
       await window.termParty.removeFavorite(cwd);
@@ -261,10 +358,15 @@ async function toggleFavorite(name, cwd, isFav) {
     // on failure, reconciliation below will correct the UI
   }
 
-  // Reconcile from authoritative backend
   await loadAndRenderFavorites();
   const termsFinal = await window.termParty.getTerminals();
   renderList(termsFinal);
+
+  // Re-render favorites panel if visible
+  if (activeViewId === 'favorites') {
+    const view = specialViews.get('favorites');
+    if (view) renderFavoritesPanel(view.wrapper);
+  }
 }
 
 // ---- Terminal views ----
@@ -308,21 +410,17 @@ function createTermView(id) {
     window.termParty.resize(id, cols, rows);
   });
 
-  // Intercept Ctrl+V for paste and Ctrl+C for copy (when selection exists)
   xterm.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
-    // Ctrl+PageUp/PageDown → terminal switching (handled at document level)
     if (e.ctrlKey && (e.key === 'PageUp' || e.key === 'PageDown')) {
       return false;
     }
-    // Ctrl+V or Ctrl+Shift+V → paste from clipboard
     if (e.ctrlKey && e.key === 'v') {
       navigator.clipboard.readText().then(text => {
         if (text) window.termParty.sendInput(id, text);
       });
       return false;
     }
-    // Ctrl+C with selection → copy to clipboard
     if (e.ctrlKey && e.key === 'c' && xterm.hasSelection()) {
       navigator.clipboard.writeText(xterm.getSelection());
       return false;
@@ -330,14 +428,12 @@ function createTermView(id) {
     return true;
   });
 
-  // Persistent wrapper — lives in the DOM until the terminal is killed
   const wrapper = document.createElement('div');
   wrapper.style.width = '100%';
   wrapper.style.height = '100%';
   wrapper.style.display = 'none';
   containerEl.appendChild(wrapper);
 
-  // Drag-and-drop support
   wrapper.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -358,39 +454,6 @@ function createTermView(id) {
   termViews.set(id, { xterm, fitAddon, wrapper, opened: false });
 }
 
-function activateTerminal(id) {
-  if (activeId === id) return;
-
-  // Hide previous terminal's wrapper
-  if (activeId !== null) {
-    const prev = termViews.get(activeId);
-    if (prev) {
-      prev.wrapper.style.display = 'none';
-    }
-  }
-
-  activeId = id;
-  emptyStateEl.style.display = 'none';
-
-  let view = termViews.get(id);
-  if (!view) {
-    createTermView(id);
-    view = termViews.get(id);
-  }
-
-  // Show wrapper and open xterm only once
-  view.wrapper.style.display = '';
-  if (!view.opened) {
-    view.xterm.open(view.wrapper);
-    view.opened = true;
-  }
-  view.fitAddon.fit();
-  view.xterm.focus();
-
-  window.termParty.resize(id, view.xterm.cols, view.xterm.rows);
-  refreshList();
-}
-
 async function killTerminal(id) {
   await window.termParty.killTerminal(id);
   const view = termViews.get(id);
@@ -399,8 +462,8 @@ async function killTerminal(id) {
     view.wrapper.remove();
     termViews.delete(id);
   }
-  if (activeId === id) {
-    activeId = null;
+  if (activeViewId === id) {
+    activeViewId = null;
     emptyStateEl.style.display = '';
   }
   refreshList();
@@ -444,8 +507,8 @@ window.termParty.onExit(({ id }) => {
     view.wrapper.remove();
     termViews.delete(id);
   }
-  if (activeId === id) {
-    activeId = null;
+  if (activeViewId === id) {
+    activeViewId = null;
     emptyStateEl.style.display = '';
   }
   refreshList();
@@ -454,8 +517,8 @@ window.termParty.onExit(({ id }) => {
 // ---- Resize handling ----
 
 window.addEventListener('resize', () => {
-  if (activeId !== null) {
-    const view = termViews.get(activeId);
+  if (typeof activeViewId === 'number') {
+    const view = termViews.get(activeViewId);
     if (view) {
       view.fitAddon.fit();
     }
@@ -465,27 +528,398 @@ window.addEventListener('resize', () => {
 // ---- Keyboard shortcuts ----
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && favoritesModalEl.style.display !== 'none') {
-    closeFavoritesModal();
-    return;
-  }
-
   if (!e.ctrlKey) return;
   if (e.key !== 'PageUp' && e.key !== 'PageDown') return;
 
   e.preventDefault();
   const ids = getTerminalIds();
-  if (ids.length === 0) return;
 
-  const idx = ids.indexOf(activeId);
-  let next;
   if (e.key === 'PageUp') {
-    next = idx <= 0 ? ids[ids.length - 1] : ids[idx - 1];
+    if (activeViewId === 'dashboard') {
+      // Dashboard → last terminal (wrap around)
+      if (ids.length > 0) activateTerminal(ids[ids.length - 1]);
+    } else if (typeof activeViewId === 'number') {
+      const idx = ids.indexOf(activeViewId);
+      if (idx <= 0) {
+        // First terminal → Dashboard
+        activateView('dashboard');
+      } else {
+        activateTerminal(ids[idx - 1]);
+      }
+    } else {
+      // On another special view, go to dashboard
+      activateView('dashboard');
+    }
   } else {
-    next = idx < 0 || idx >= ids.length - 1 ? ids[0] : ids[idx + 1];
+    if (activeViewId === 'dashboard') {
+      // Dashboard → first terminal
+      if (ids.length > 0) activateTerminal(ids[0]);
+    } else if (typeof activeViewId === 'number') {
+      const idx = ids.indexOf(activeViewId);
+      if (idx < 0 || idx >= ids.length - 1) {
+        // Last terminal → Dashboard
+        activateView('dashboard');
+      } else {
+        activateTerminal(ids[idx + 1]);
+      }
+    } else {
+      // On another special view, go to dashboard
+      activateView('dashboard');
+    }
   }
-  activateTerminal(next);
 });
+
+// ---- Sidebar button handlers ----
+
+openFavoritesBtn.addEventListener('click', () => activateView('favorites'));
+openScratchpadBtn.addEventListener('click', () => activateView('scratchpad'));
+appTitleEl.addEventListener('click', () => activateView('dashboard'));
+
+// ========================================================
+// Register special views
+// ========================================================
+
+// ---- Favorites panel ----
+
+registerSpecialView('favorites', {
+  buildFn(wrapper) {
+    wrapper.classList.add('favorites-panel');
+    wrapper.innerHTML = `
+      <div class="view-panel-header">Favorites</div>
+      <ul class="fav-list"></ul>
+      <div class="panel-empty" style="display:none;">No favorites yet. Star a terminal to add it here.</div>
+    `;
+  },
+  onActivate(wrapper) {
+    renderFavoritesPanel(wrapper);
+  },
+});
+
+// ---- Dashboard panel ----
+
+let dashboardPollInterval = null;
+
+registerSpecialView('dashboard', {
+  buildFn(wrapper) {
+    wrapper.classList.add('dashboard-panel');
+    wrapper.innerHTML = `
+      <div class="view-panel-header">Dashboard</div>
+      <div class="dash-stat-bar">
+        <div class="dash-stat">
+          <span class="dash-stat-label">CPU</span>
+          <span class="dash-stat-value" id="dash-cpu">--</span>
+        </div>
+        <div class="dash-stat">
+          <span class="dash-stat-label">Memory</span>
+          <span class="dash-stat-value" id="dash-mem">--</span>
+        </div>
+        <div class="dash-stat">
+          <span class="dash-stat-label">Terminals</span>
+          <span class="dash-stat-value" id="dash-term-count">0</span>
+        </div>
+      </div>
+      <div class="dash-section-title">Recent Exits</div>
+      <ul class="dash-exits" id="dash-exits"></ul>
+      <div class="dash-section-title">Active Terminals</div>
+      <div class="dash-tail-grid" id="dash-tail-grid"></div>
+    `;
+  },
+  onActivate() {
+    refreshDashboard();
+    dashboardPollInterval = setInterval(refreshDashboard, 2000);
+  },
+  onDeactivate() {
+    if (dashboardPollInterval) {
+      clearInterval(dashboardPollInterval);
+      dashboardPollInterval = null;
+    }
+  },
+});
+
+async function refreshDashboard() {
+  const [dashData, stats] = await Promise.all([
+    window.termParty.getDashboardData(),
+    window.termParty.getSystemStats(),
+  ]);
+
+  const cpuEl = document.getElementById('dash-cpu');
+  const memEl = document.getElementById('dash-mem');
+  const countEl = document.getElementById('dash-term-count');
+  const exitsEl = document.getElementById('dash-exits');
+  const gridEl = document.getElementById('dash-tail-grid');
+
+  if (!cpuEl) return; // panel not built yet
+
+  cpuEl.textContent = stats.cpuPercent + '%';
+  memEl.textContent = `${stats.memUsedMB} / ${stats.memTotalMB} MB`;
+  countEl.textContent = dashData.terminals.length;
+
+  // Recent exits
+  exitsEl.innerHTML = '';
+  if (dashData.recentExits.length === 0) {
+    exitsEl.innerHTML = '<div class="panel-empty">No recent exits</div>';
+  } else {
+    for (const exit of dashData.recentExits) {
+      const item = document.createElement('div');
+      item.className = 'dash-exit-item';
+
+      const code = document.createElement('span');
+      code.className = 'exit-code ' + (exit.exitCode === 0 ? 'success' : 'failure');
+      code.textContent = exit.exitCode ?? '?';
+      item.appendChild(code);
+
+      const title = document.createElement('span');
+      title.className = 'exit-title';
+      title.textContent = exit.title;
+      item.appendChild(title);
+
+      const time = document.createElement('span');
+      time.className = 'exit-time';
+      time.textContent = formatTime(exit.timestamp);
+      item.appendChild(time);
+
+      exitsEl.appendChild(item);
+    }
+  }
+
+  // Terminal tail cards
+  gridEl.innerHTML = '';
+  if (dashData.terminals.length === 0) {
+    gridEl.innerHTML = '<div class="panel-empty">No active terminals</div>';
+  } else {
+    for (const term of dashData.terminals) {
+      const card = document.createElement('div');
+      const isActive = (Date.now() - term.lastDataTime) < 3000;
+      card.className = 'dash-tail-card ' + (isActive ? 'term-active' : 'term-idle');
+
+      const header = document.createElement('div');
+      header.className = 'dash-tail-card-header';
+
+      const titleEl = document.createElement('span');
+      titleEl.className = 'dash-tail-card-title';
+      titleEl.textContent = term.title || term.cwd;
+      header.appendChild(titleEl);
+
+      const gotoBtn = document.createElement('button');
+      gotoBtn.className = 'dash-tail-card-goto';
+      gotoBtn.textContent = 'Go to';
+      gotoBtn.addEventListener('click', () => activateTerminal(term.id));
+      header.appendChild(gotoBtn);
+
+      card.appendChild(header);
+
+      const content = document.createElement('div');
+      content.className = 'dash-tail-card-content';
+      // Show last ~20 lines of tail text
+      const lines = stripAnsi(term.tailText).split('\n');
+      content.textContent = lines.slice(-20).join('\n');
+      card.appendChild(content);
+
+      gridEl.appendChild(card);
+    }
+  }
+}
+
+function formatTime(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  return d.toLocaleDateString();
+}
+
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+}
+
+// ---- Scratchpad panel ----
+
+let scratchpadSelectedFile = null;
+let scratchpadPath = null;
+
+registerSpecialView('scratchpad', {
+  buildFn(wrapper) {
+    wrapper.classList.add('scratchpad-panel');
+    wrapper.innerHTML = `
+      <div class="scratch-sidebar">
+        <div class="scratch-search-wrap">
+          <div class="view-panel-header">Scratchpad</div>
+          <input type="text" class="scratch-search" placeholder="Search files...">
+        </div>
+        <div class="scratch-path-display"></div>
+        <ul class="scratch-file-list"></ul>
+      </div>
+      <div class="scratch-main">
+        <div class="scratch-preview-header" style="display:none;">
+          <span class="scratch-preview-title"></span>
+          <div class="scratch-send-to">
+            <button class="scratch-send-btn">Send To</button>
+            <div class="scratch-send-dropdown"></div>
+          </div>
+        </div>
+        <div class="scratch-preview"></div>
+        <div class="scratch-empty">Select a file to preview</div>
+      </div>
+    `;
+
+    const searchInput = wrapper.querySelector('.scratch-search');
+    let searchTimeout;
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        refreshScratchpadFiles(searchInput.value);
+      }, 200);
+    });
+
+    const sendBtn = wrapper.querySelector('.scratch-send-btn');
+    const dropdown = wrapper.querySelector('.scratch-send-dropdown');
+    sendBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      dropdown.classList.toggle('open');
+      if (dropdown.classList.contains('open')) {
+        await populateSendToDropdown(dropdown);
+      }
+    });
+
+    document.addEventListener('click', () => {
+      dropdown.classList.remove('open');
+    });
+  },
+  async onActivate(wrapper) {
+    if (!scratchpadPath) {
+      scratchpadPath = await window.termParty.getScratchpadPath();
+    }
+    const pathDisplay = wrapper.querySelector('.scratch-path-display');
+    if (pathDisplay) pathDisplay.textContent = scratchpadPath;
+
+    const searchInput = wrapper.querySelector('.scratch-search');
+    refreshScratchpadFiles(searchInput ? searchInput.value : '');
+  },
+});
+
+async function refreshScratchpadFiles(query) {
+  const view = specialViews.get('scratchpad');
+  if (!view) return;
+  const wrapper = view.wrapper;
+  const listEl = wrapper.querySelector('.scratch-file-list');
+  if (!listEl) return;
+
+  let files;
+  if (query && query.trim()) {
+    files = await window.termParty.searchScratchpadSemantic(query);
+  } else {
+    files = await window.termParty.listScratchpadFiles();
+  }
+
+  listEl.innerHTML = '';
+  if (files.length === 0) {
+    listEl.innerHTML = '<div class="panel-empty">No files in scratchpad</div>';
+    return;
+  }
+
+  for (const file of files) {
+    const li = document.createElement('li');
+    if (scratchpadSelectedFile === file.path) li.classList.add('selected');
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'scratch-file-name';
+    nameEl.textContent = file.name || file.path;
+    li.appendChild(nameEl);
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'scratch-file-meta';
+    metaEl.textContent = file.path + (file.mtime ? ' | ' + new Date(file.mtime).toLocaleString() : '');
+    li.appendChild(metaEl);
+
+    if (file.snippet) {
+      const snippetEl = document.createElement('div');
+      snippetEl.className = 'scratch-file-snippet';
+      snippetEl.textContent = file.snippet;
+      li.appendChild(snippetEl);
+    }
+
+    if (file.score > 0) {
+      const scoreEl = document.createElement('div');
+      scoreEl.className = 'scratch-file-score';
+      scoreEl.textContent = 'relevance: ' + file.score.toFixed(2);
+      li.appendChild(scoreEl);
+    }
+
+    li.addEventListener('click', () => selectScratchpadFile(file.path));
+    listEl.appendChild(li);
+  }
+}
+
+async function selectScratchpadFile(relPath) {
+  scratchpadSelectedFile = relPath;
+  const view = specialViews.get('scratchpad');
+  if (!view) return;
+  const wrapper = view.wrapper;
+
+  const file = await window.termParty.readScratchpadFile(relPath);
+  const previewHeader = wrapper.querySelector('.scratch-preview-header');
+  const previewEl = wrapper.querySelector('.scratch-preview');
+  const emptyEl = wrapper.querySelector('.scratch-empty');
+  const titleEl = wrapper.querySelector('.scratch-preview-title');
+
+  if (file) {
+    previewHeader.style.display = '';
+    previewEl.style.display = '';
+    emptyEl.style.display = 'none';
+    titleEl.textContent = file.name;
+    previewEl.textContent = file.content;
+  } else {
+    previewHeader.style.display = 'none';
+    previewEl.style.display = 'none';
+    emptyEl.style.display = '';
+  }
+
+  // Update selected state in list
+  const listEl = wrapper.querySelector('.scratch-file-list');
+  for (const li of listEl.querySelectorAll('li')) {
+    li.classList.remove('selected');
+  }
+  // find and select the matching one
+  for (const li of listEl.querySelectorAll('li')) {
+    const nameEl = li.querySelector('.scratch-file-meta');
+    if (nameEl && nameEl.textContent.startsWith(relPath)) {
+      li.classList.add('selected');
+      break;
+    }
+  }
+}
+
+async function populateSendToDropdown(dropdown) {
+  dropdown.innerHTML = '';
+  const terminals = await window.termParty.getTerminals();
+  const activeTerminals = terminals.filter(t => !t.ghost);
+
+  if (activeTerminals.length === 0) {
+    const item = document.createElement('div');
+    item.className = 'scratch-send-dropdown-item';
+    item.textContent = 'No active terminals';
+    dropdown.appendChild(item);
+    return;
+  }
+
+  for (const term of activeTerminals) {
+    const item = document.createElement('div');
+    item.className = 'scratch-send-dropdown-item';
+    item.textContent = term.title || term.cwd;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dropdown.classList.remove('open');
+      if (scratchpadSelectedFile && scratchpadPath) {
+        const fullPath = scratchpadPath + '/' + scratchpadSelectedFile;
+        const quotedPath = `"${fullPath.replace(/\\/g, '/')}"`;
+        window.termParty.sendInput(term.id, quotedPath);
+      }
+    });
+    dropdown.appendChild(item);
+  }
+}
 
 // ---- Init ----
 

@@ -12,6 +12,17 @@ contextBridge.exposeInMainWorld('termParty', {
   addFavorite: (name, cwd) => ipcRenderer.invoke('add-favorite', { name, cwd }),
   removeFavorite: (cwd) => ipcRenderer.invoke('remove-favorite', cwd),
 
+  // Dashboard
+  getDashboardData: () => ipcRenderer.invoke('get-dashboard-data'),
+  getSystemStats: () => ipcRenderer.invoke('get-system-stats'),
+
+  // Scratchpad
+  getScratchpadPath: () => ipcRenderer.invoke('get-scratchpad-path'),
+  listScratchpadFiles: () => ipcRenderer.invoke('list-scratchpad-files'),
+  readScratchpadFile: (relativePath) => ipcRenderer.invoke('read-scratchpad-file', relativePath),
+  searchScratchpad: (query) => ipcRenderer.invoke('search-scratchpad', query),
+  searchScratchpadSemantic: (query) => ipcRenderer.invoke('search-scratchpad-semantic', query),
+
   sendInput: (id, data) => ipcRenderer.send('terminal-input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('terminal-resize', { id, cols, rows }),
 

@@ -5,20 +5,64 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dev": "electron . --dev"
+    "dev": "electron . --dev",
+    "build": "electron-builder --win --mac --linux",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
   },
   "keywords": [
     "terminal",
     "electron",
     "manager"
   ],
+  "author": "Fingerskier",
   "license": "MIT",
+  "optionalDependencies": {
+    "@lancedb/lancedb": "^0.13.0"
+  },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "build": {
+    "appId": "com.fingerskier.term-party",
+    "productName": "Term Party",
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/node-pty/**",
+      "node_modules/@lancedb/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "favicon.ico"
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "icon.icns",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "web-app-manifest-512x512.png",
+      "category": "Development"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "overrides": {
+    "node-gyp": "^10.3.1"
   },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^25.1.8"
   }
 }
