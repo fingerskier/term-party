@@ -30,7 +30,9 @@
       "Bash(npm config:*)",
       "mcp__plugin_dude_dude__search",
       "Bash(magick:*)",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(grep:*)",
+      "Bash(git -C \"C:/dev/fingerskier/agent/term-party\" log --oneline -10)"
     ]
   }
 }

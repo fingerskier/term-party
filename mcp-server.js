@@ -27,6 +27,9 @@ if (!scratchpadDir) {
   process.exit(1);
 }
 
+const terminalName = process.env.TERM_PARTY_NAME || 'anonymous';
+const MAX_LOG_LINES = 500;
+
 // Ensure scratchpad dir exists
 try {
   fs.mkdirSync(scratchpadDir, { recursive: true });
@@ -274,6 +277,120 @@ server.tool(
     const results = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
     return {
       content: [{ type: 'text', text: JSON.stringify(results, null, 2) }],
+    };
+  }
+);
+
+// --- JSONL channel helpers ---
+
+function isValidProjectName(name) {
+  return name && !/[/\\]/.test(name) && name !== '.' && name !== '..';
+}
+
+function trimLogFile(filePath) {
+  try {
+    const data = fs.readFileSync(filePath, 'utf-8');
+    const lines = data.split('\n').filter(l => l.trim());
+    if (lines.length > MAX_LOG_LINES) {
+      const trimmed = lines.slice(lines.length - MAX_LOG_LINES);
+      fs.writeFileSync(filePath, trimmed.join('\n') + '\n', 'utf-8');
+    }
+  } catch {}
+}
+
+function readJsonlFile(filePath) {
+  try {
+    const data = fs.readFileSync(filePath, 'utf-8');
+    return data.split('\n')
+      .filter(l => l.trim())
+      .map(l => { try { return JSON.parse(l); } catch { return null; } })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+server.tool(
+  'append_log',
+  'Append a JSON entry to a JSONL channel log. Each terminal writes to scratchpad/{project}/{terminal-name}.jsonl. Use this for inter-agent communication.',
+  {
+    project: z.string().describe('Project/channel name (typically basename of cwd)'),
+    entry: z.record(z.unknown()).describe('Arbitrary JSON object to append'),
+  },
+  async ({ project, entry }) => {
+    if (!isValidProjectName(project)) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid project name' }],
+        isError: true,
+      };
+    }
+
+    const projectDir = path.join(scratchpadDir, project);
+    try {
+      fs.mkdirSync(projectDir, { recursive: true });
+    } catch {}
+
+    const logFile = path.join(projectDir, `${terminalName}.jsonl`);
+    const augmented = { ...entry, _from: terminalName, _ts: new Date().toISOString() };
+
+    try {
+      fs.appendFileSync(logFile, JSON.stringify(augmented) + '\n');
+      trimLogFile(logFile);
+      return {
+        content: [{ type: 'text', text: `Appended to ${project}/${terminalName}.jsonl` }],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${err.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+server.tool(
+  'read_log',
+  'Read entries from JSONL channel logs. If terminal is specified, reads that one file. Otherwise reads all .jsonl files in the project, merged and sorted by timestamp.',
+  {
+    project: z.string().describe('Project/channel name'),
+    terminal: z.string().optional().describe('Specific terminal name to read from (omit to read all)'),
+    limit: z.number().optional().default(50).describe('Max entries to return (default 50)'),
+  },
+  async ({ project, terminal, limit }) => {
+    if (!isValidProjectName(project)) {
+      return {
+        content: [{ type: 'text', text: 'Error: Invalid project name' }],
+        isError: true,
+      };
+    }
+
+    const projectDir = path.join(scratchpadDir, project);
+
+    let entries = [];
+    if (terminal) {
+      const logFile = path.join(projectDir, `${terminal}.jsonl`);
+      entries = readJsonlFile(logFile);
+    } else {
+      // Read all .jsonl files in project dir
+      try {
+        const files = fs.readdirSync(projectDir);
+        for (const file of files) {
+          if (file.endsWith('.jsonl')) {
+            const logFile = path.join(projectDir, file);
+            entries.push(...readJsonlFile(logFile));
+          }
+        }
+        // Sort by _ts
+        entries.sort((a, b) => (a._ts || '').localeCompare(b._ts || ''));
+      } catch {
+        // project dir may not exist yet
+      }
+    }
+
+    // Return most recent entries
+    const result = entries.slice(-limit);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
     };
   }
 );
