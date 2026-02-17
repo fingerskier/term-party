@@ -199,6 +199,9 @@ function renderList(terminals) {
 
     if (t.ghost) {
       li.classList.add('ghost');
+    } else {
+      const isActive = (Date.now() - t.lastDataTime) < 3000;
+      li.classList.add(isActive ? 'term-active' : 'term-idle');
     }
 
     // Drag-and-drop for non-ghost terminals
@@ -1002,3 +1005,6 @@ async function populateSendToDropdown(dropdown) {
 // ---- Init ----
 
 refreshList();
+
+// Periodically refresh terminal list to update active/idle border indicators
+setInterval(refreshList, 3000);

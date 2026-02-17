@@ -172,7 +172,7 @@ html, body {
   border-left: 2px solid transparent;
   cursor: pointer;
   font-size: 13px;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, border-color 0.4s, box-shadow 0.4s;
 }
 
 #terminal-list li:hover {
@@ -183,6 +183,16 @@ html, body {
   background: var(--bg-elevated);
   border-left: 2px solid var(--accent-primary);
   box-shadow: inset 4px 0 8px rgba(200, 255, 0, 0.06);
+}
+
+#terminal-list li.term-active:not(.active) {
+  border-left-color: var(--success);
+  box-shadow: inset 4px 0 8px rgba(34, 197, 94, 0.1);
+}
+
+#terminal-list li.term-idle:not(.active) {
+  border-left-color: #f9e2af;
+  box-shadow: inset 4px 0 8px rgba(249, 226, 175, 0.06);
 }
 
 #terminal-list li:not(.ghost) {
