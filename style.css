@@ -185,6 +185,26 @@ html, body {
   box-shadow: inset 4px 0 8px rgba(200, 255, 0, 0.06);
 }
 
+#terminal-list li:not(.ghost) {
+  cursor: grab;
+}
+
+#terminal-list li:not(.ghost):active {
+  cursor: grabbing;
+}
+
+#terminal-list li.dragging {
+  opacity: 0.4;
+}
+
+#terminal-list li.drop-before {
+  border-top: 2px solid var(--accent-primary);
+}
+
+#terminal-list li.drop-after {
+  border-bottom: 2px solid var(--accent-primary);
+}
+
 #terminal-list li .term-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -243,6 +263,24 @@ html, body {
 
 #terminal-list li .star-btn:hover {
   color: var(--accent-primary);
+}
+
+/* --- Notification badge --- */
+
+#terminal-list li .term-notify-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-purple);
+  box-shadow: 0 0 6px var(--accent-purple-glow);
+  flex-shrink: 0;
+  margin-left: 4px;
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 /* --- Viewer --- */
@@ -345,62 +383,67 @@ html, body {
 
 /* --- Favorites panel --- */
 
-.favorites-panel .fav-list {
-  list-style: none;
+.favorites-panel .fav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
 }
 
-.favorites-panel .fav-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-size: 13px;
-  transition: background 0.15s;
-}
-
-.favorites-panel .fav-list li:hover {
+.fav-card {
+  position: relative;
   background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 
-.favorites-panel .fav-list li .fav-name {
+.fav-card:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.fav-card .fav-name {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--accent-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  padding-right: 20px;
 }
 
-.favorites-panel .fav-list li .fav-cwd {
+.fav-card .fav-cwd {
+  font-size: 10px;
   color: var(--text-secondary);
-  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-left: 8px;
-  max-width: 280px;
+  margin-top: 6px;
 }
 
-.favorites-panel .fav-list li .fav-remove-btn {
+.fav-card .fav-remove-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   background: none;
   border: none;
   color: var(--danger);
   cursor: pointer;
   font-size: 15px;
   padding: 0 4px;
-  margin-left: 6px;
   line-height: 1;
   opacity: 0;
   transition: opacity 0.15s;
-  flex-shrink: 0;
 }
 
-.favorites-panel .fav-list li:hover .fav-remove-btn {
+.fav-card:hover .fav-remove-btn {
   opacity: 1;
 }
 
-.favorites-panel .fav-list li .fav-remove-btn:hover {
+.fav-card .fav-remove-btn:hover {
   color: var(--danger-hover);
 }
 

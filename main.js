@@ -9,6 +9,7 @@ const terminals = new Map(); // id -> { pty, cwd, title, tailBuffer }
 let nextId = 1;
 let savedTerminals = []; // array of { cwd, title } — ghost entries not yet activated
 let favorites = []; // array of { name, cwd }
+let terminalOrder = []; // array of terminal ids in display order
 
 // --- Dashboard: exit tracking ---
 const recentExits = []; // { id, title, exitCode, timestamp } — last 20
@@ -179,11 +180,42 @@ function reindexFile(filename) {
       });
       // Update lancedb async if available
       upsertLanceDoc(normalizedFilename, path.basename(normalizedFilename), content, stat.mtimeMs).catch(() => {});
+      // Notify terminals about JSONL channel changes
+      notifyJsonlChange(normalizedFilename);
     }
   } catch {
     // File may have been deleted
     scratchpadIndex.delete(normalizedFilename);
     removeLanceDoc(normalizedFilename).catch(() => {});
+  }
+}
+
+function notifyJsonlChange(normalizedFilename) {
+  if (!normalizedFilename.endsWith('.jsonl')) return;
+
+  // Parse path: {project}/{terminal-name}.jsonl (must be exactly 2 parts)
+  const parts = normalizedFilename.split('/');
+  if (parts.length !== 2) return;
+
+  const project = parts[0];
+  const fromTerminal = path.basename(parts[1], '.jsonl');
+
+  // Find terminals whose cwd basename matches the project, excluding the writer
+  const notifyIds = [];
+  for (const [id, term] of terminals) {
+    const termProject = path.basename(term.cwd || '');
+    if (termProject === project && term.spawnName !== fromTerminal) {
+      notifyIds.push(id);
+    }
+  }
+
+  if (notifyIds.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('scratchpad-update', {
+      project,
+      file: normalizedFilename,
+      from: fromTerminal,
+      terminalIds: notifyIds,
+    });
   }
 }
 
@@ -319,10 +351,13 @@ function getSystemStats() {
 
 // --- Terminal env vars ---
 
-function getTerminalEnv() {
+function getTerminalEnv(terminalName) {
   const env = { ...process.env };
   if (scratchpadDir) {
     env.TERM_PARTY_SCRATCHPAD = scratchpadDir;
+  }
+  if (terminalName) {
+    env.TERM_PARTY_NAME = terminalName;
   }
   const mcpServerPath = path.join(__dirname, 'mcp-server.js');
   try {
@@ -363,6 +398,7 @@ app.whenReady().then(async () => {
   createWindow();
   savedTerminals = loadSavedTerminals();
   favorites = loadFavorites();
+  terminalOrder = [...terminals.keys()];
   initScratchpad();
   await initLanceDb();
 });
@@ -393,15 +429,14 @@ ipcMain.handle('select-directory', async () => {
 ipcMain.handle('create-terminal', (_event, cwd) => {
   const id = nextId++;
   const shell = getShell();
+  const title = path.basename(cwd || os.homedir());
   const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
     cwd: cwd || os.homedir(),
-    env: getTerminalEnv(),
+    env: getTerminalEnv(title),
   });
-
-  const title = path.basename(cwd || os.homedir());
   let tailBuffer = '';
 
   ptyProcess.onData((data) => {
@@ -425,6 +460,7 @@ ipcMain.handle('create-terminal', (_event, cwd) => {
     const term = terminals.get(id);
     const exitTitle = term ? term.title : title;
     terminals.delete(id);
+    terminalOrder = terminalOrder.filter(oid => oid !== id);
 
     // Track exit
     recentExits.unshift({ id, title: exitTitle, exitCode, timestamp: Date.now() });
@@ -435,7 +471,8 @@ ipcMain.handle('create-terminal', (_event, cwd) => {
     }
   });
 
-  terminals.set(id, { pty: ptyProcess, cwd, title, tailBuffer: '', lastDataTime: Date.now() });
+  terminals.set(id, { pty: ptyProcess, cwd, title, spawnName: title, tailBuffer: '', lastDataTime: Date.now() });
+  terminalOrder.push(id);
   persistTerminals();
   return { id, cwd, title };
 });
@@ -455,6 +492,7 @@ ipcMain.handle('kill-terminal', (_event, id) => {
   if (term) {
     term.pty.kill();
     terminals.delete(id);
+    terminalOrder = terminalOrder.filter(oid => oid !== id);
     persistTerminals();
   }
   return true;
@@ -462,13 +500,28 @@ ipcMain.handle('kill-terminal', (_event, id) => {
 
 ipcMain.handle('get-terminals', () => {
   const list = [];
-  for (const [id, term] of terminals) {
-    list.push({ id, cwd: term.cwd, title: term.title, ghost: false });
+  // Ordered terminals first
+  for (const id of terminalOrder) {
+    const term = terminals.get(id);
+    if (term) list.push({ id, cwd: term.cwd, title: term.title, ghost: false });
   }
+  // Any terminals not in order array (safety fallback)
+  for (const [id, term] of terminals) {
+    if (!terminalOrder.includes(id)) {
+      list.push({ id, cwd: term.cwd, title: term.title, ghost: false });
+    }
+  }
+  // Ghosts always last
   savedTerminals.forEach((ghost, i) => {
     list.push({ id: `ghost-${i}`, cwd: ghost.cwd, title: ghost.title, ghost: true });
   });
   return list;
+});
+
+ipcMain.handle('set-terminal-order', (_event, order) => {
+  terminalOrder = order.filter(id => terminals.has(id));
+  persistTerminals();
+  return true;
 });
 
 ipcMain.handle('remove-saved-terminal', (_event, index) => {

@@ -18,6 +18,7 @@ const specialViews = new Map();
 let activeViewId = null; // number (terminal) or string ('dashboard', 'favorites', 'scratchpad')
 let currentFavorites = [];
 let favoriteCwds = new Set();
+const termNotifications = new Map(); // terminal id -> boolean
 
 // ---- Context menu ----
 
@@ -107,6 +108,7 @@ function activateTerminal(id) {
   }
 
   activeViewId = id;
+  termNotifications.delete(id);
   emptyStateEl.style.display = 'none';
 
   let view = termViews.get(id);
@@ -199,6 +201,63 @@ function renderList(terminals) {
       li.classList.add('ghost');
     }
 
+    // Drag-and-drop for non-ghost terminals
+    if (!t.ghost) {
+      li.draggable = true;
+
+      li.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/x-term-id', String(t.id));
+        e.dataTransfer.effectAllowed = 'move';
+        li.classList.add('dragging');
+      });
+
+      li.addEventListener('dragover', (e) => {
+        // Only handle sidebar reorder drags (not file drops)
+        if (!e.dataTransfer.types.includes('text/x-term-id')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const rect = li.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        li.classList.remove('drop-before', 'drop-after');
+        if (e.clientY < midY) {
+          li.classList.add('drop-before');
+        } else {
+          li.classList.add('drop-after');
+        }
+      });
+
+      li.addEventListener('dragleave', () => {
+        li.classList.remove('drop-before', 'drop-after');
+      });
+
+      li.addEventListener('drop', (e) => {
+        if (!e.dataTransfer.types.includes('text/x-term-id')) return;
+        e.preventDefault();
+        const draggedId = Number(e.dataTransfer.getData('text/x-term-id'));
+        if (draggedId === t.id) return;
+
+        // Compute new order from current DOM
+        const ids = [...terminalListEl.querySelectorAll('li:not(.ghost)')]
+          .map(el => Number(el.dataset.id))
+          .filter(id => id !== draggedId);
+
+        const rect = li.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        const targetIdx = ids.indexOf(t.id);
+        const insertIdx = e.clientY < midY ? targetIdx : targetIdx + 1;
+        ids.splice(insertIdx, 0, draggedId);
+
+        window.termParty.setTerminalOrder(ids).then(() => refreshList());
+      });
+
+      li.addEventListener('dragend', () => {
+        li.classList.remove('dragging');
+        for (const el of terminalListEl.querySelectorAll('li')) {
+          el.classList.remove('drop-before', 'drop-after', 'dragging');
+        }
+      });
+    }
+
     const title = document.createElement('span');
     title.className = 'term-title';
     title.textContent = t.title || t.cwd;
@@ -222,6 +281,13 @@ function renderList(terminals) {
         killTerminal(t.id);
       });
       li.addEventListener('click', () => activateTerminal(t.id));
+    }
+
+    // Notification badge for non-ghost terminals with pending updates
+    if (!t.ghost && termNotifications.has(Number(t.id))) {
+      const badge = document.createElement('span');
+      badge.className = 'term-notify-badge';
+      li.appendChild(badge);
     }
 
     // Star button for non-ghost terminals
@@ -276,30 +342,35 @@ async function loadAndRenderFavorites() {
 }
 
 function renderFavoritesPanel(container) {
-  const listEl = container.querySelector('.fav-list');
+  const gridEl = container.querySelector('.fav-grid');
   const emptyEl = container.querySelector('.panel-empty');
-  if (!listEl || !emptyEl) return;
+  if (!gridEl || !emptyEl) return;
 
-  listEl.innerHTML = '';
+  gridEl.innerHTML = '';
   if (currentFavorites.length === 0) {
     emptyEl.style.display = '';
     return;
   }
   emptyEl.style.display = 'none';
 
-  for (const fav of currentFavorites) {
-    const li = document.createElement('li');
+  const sorted = [...currentFavorites].sort((a, b) =>
+    (a.name || a.cwd).localeCompare(b.name || b.cwd, undefined, { sensitivity: 'base' })
+  );
 
-    const name = document.createElement('span');
+  for (const fav of sorted) {
+    const card = document.createElement('div');
+    card.className = 'fav-card';
+
+    const name = document.createElement('div');
     name.className = 'fav-name';
     name.textContent = fav.name;
-    li.appendChild(name);
+    card.appendChild(name);
 
-    const cwdSpan = document.createElement('span');
+    const cwdSpan = document.createElement('div');
     cwdSpan.className = 'fav-cwd';
     cwdSpan.textContent = fav.cwd;
     cwdSpan.title = fav.cwd;
-    li.appendChild(cwdSpan);
+    card.appendChild(cwdSpan);
 
     const removeBtn = document.createElement('button');
     removeBtn.className = 'fav-remove-btn';
@@ -309,13 +380,13 @@ function renderFavoritesPanel(container) {
       e.stopPropagation();
       removeFavorite(fav.cwd);
     });
-    li.appendChild(removeBtn);
+    card.appendChild(removeBtn);
 
-    li.addEventListener('click', () => {
+    card.addEventListener('click', () => {
       spawnFromFavorite(fav.cwd);
     });
 
-    listEl.appendChild(li);
+    gridEl.appendChild(card);
   }
 }
 
@@ -514,6 +585,13 @@ window.termParty.onExit(({ id }) => {
   refreshList();
 });
 
+window.termParty.onScratchpadUpdate(({ terminalIds }) => {
+  for (const id of terminalIds) {
+    if (id !== activeViewId) termNotifications.set(id, true);
+  }
+  refreshList();
+});
+
 // ---- Resize handling ----
 
 window.addEventListener('resize', () => {
@@ -586,7 +664,7 @@ registerSpecialView('favorites', {
     wrapper.classList.add('favorites-panel');
     wrapper.innerHTML = `
       <div class="view-panel-header">Favorites</div>
-      <ul class="fav-list"></ul>
+      <div class="fav-grid"></div>
       <div class="panel-empty" style="display:none;">No favorites yet. Star a terminal to add it here.</div>
     `;
   },

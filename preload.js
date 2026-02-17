@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('termParty', {
   getTerminals: () => ipcRenderer.invoke('get-terminals'),
   removeSavedTerminal: (index) => ipcRenderer.invoke('remove-saved-terminal', index),
   renameTerminal: (id, newTitle) => ipcRenderer.invoke('rename-terminal', { id, newTitle }),
+  setTerminalOrder: (order) => ipcRenderer.invoke('set-terminal-order', order),
 
   getFavorites: () => ipcRenderer.invoke('get-favorites'),
   addFavorite: (name, cwd) => ipcRenderer.invoke('add-favorite', { name, cwd }),
@@ -36,5 +37,11 @@ contextBridge.exposeInMainWorld('termParty', {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('terminal-exited', listener);
     return () => ipcRenderer.removeListener('terminal-exited', listener);
+  },
+
+  onScratchpadUpdate: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('scratchpad-update', listener);
+    return () => ipcRenderer.removeListener('scratchpad-update', listener);
   },
 });
