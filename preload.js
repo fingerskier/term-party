@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('termParty', {
   getFavorites: () => ipcRenderer.invoke('get-favorites'),
   addFavorite: (name, cwd) => ipcRenderer.invoke('add-favorite', { name, cwd }),
   removeFavorite: (cwd) => ipcRenderer.invoke('remove-favorite', cwd),
+  renameFavorite: (cwd, newName) => ipcRenderer.invoke('rename-favorite', { cwd, newName }),
+  renameDirectory: (cwd, newName) => ipcRenderer.invoke('rename-directory', { cwd, newName }),
 
   // Dashboard
   getDashboardData: () => ipcRenderer.invoke('get-dashboard-data'),

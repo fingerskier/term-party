@@ -457,6 +457,11 @@ html, body {
   color: var(--danger-hover);
 }
 
+.fav-card .rename-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .panel-empty {
   padding: 24px 20px;
   text-align: center;

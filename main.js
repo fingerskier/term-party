@@ -5,11 +5,12 @@ const pty = require('node-pty');
 const os = require('os');
 
 let mainWindow;
-const terminals = new Map(); // id -> { pty, cwd, title, tailBuffer }
+const terminals = new Map(); // id -> { pty, cwd, tailBuffer }
 let nextId = 1;
-let savedTerminals = []; // array of { cwd, title } — ghost entries not yet activated
-let favorites = []; // array of { name, cwd }
+let savedTerminals = []; // array of { cwd } — ghost entries not yet activated
+let favorites = []; // array of { cwd }
 let terminalOrder = []; // array of terminal ids in display order
+let directoryNames = {}; // cwd -> display name (single source of truth)
 
 // --- Dashboard: exit tracking ---
 const recentExits = []; // { id, title, exitCode, timestamp } — last 20
@@ -43,10 +44,10 @@ function loadSavedTerminals() {
 async function persistTerminals() {
   const entries = [];
   for (const [, term] of terminals) {
-    entries.push({ cwd: term.cwd, title: term.title });
+    entries.push({ cwd: term.cwd });
   }
   for (const ghost of savedTerminals) {
-    entries.push({ cwd: ghost.cwd, title: ghost.title });
+    entries.push({ cwd: ghost.cwd });
   }
   try {
     await fs.promises.writeFile(getSavePath(), JSON.stringify(entries, null, 2));
@@ -75,6 +76,57 @@ async function persistFavorites() {
   } catch {
     // best-effort persistence
   }
+}
+
+function getDirectoryNamesPath() {
+  return path.join(app.getPath('userData'), 'directory-names.json');
+}
+
+function loadDirectoryNames() {
+  try {
+    const data = fs.readFileSync(getDirectoryNamesPath(), 'utf-8');
+    const parsed = JSON.parse(data);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function persistDirectoryNames() {
+  try {
+    await fs.promises.writeFile(getDirectoryNamesPath(), JSON.stringify(directoryNames, null, 2));
+  } catch {
+    // best-effort persistence
+  }
+}
+
+function migrateToDirectoryNames() {
+  let migrated = false;
+  // Seed from saved terminals that have a title different from basename
+  for (const entry of savedTerminals) {
+    if (entry.title && entry.cwd && entry.title !== path.basename(entry.cwd)) {
+      if (!directoryNames[entry.cwd]) {
+        directoryNames[entry.cwd] = entry.title;
+        migrated = true;
+      }
+    }
+  }
+  // Seed from favorites that have a name different from basename
+  for (const fav of favorites) {
+    if (fav.name && fav.cwd && fav.name !== path.basename(fav.cwd)) {
+      if (!directoryNames[fav.cwd]) {
+        directoryNames[fav.cwd] = fav.name;
+        migrated = true;
+      }
+    }
+  }
+  if (migrated) {
+    persistDirectoryNames();
+  }
+}
+
+function resolveDirectoryName(cwd) {
+  return directoryNames[cwd] || path.basename(cwd || '');
 }
 
 function getShell() {
@@ -398,6 +450,8 @@ app.whenReady().then(async () => {
   createWindow();
   savedTerminals = loadSavedTerminals();
   favorites = loadFavorites();
+  directoryNames = loadDirectoryNames();
+  migrateToDirectoryNames();
   terminalOrder = [...terminals.keys()];
   initScratchpad();
   await initLanceDb();
@@ -429,12 +483,13 @@ ipcMain.handle('select-directory', async () => {
 ipcMain.handle('create-terminal', (_event, cwd) => {
   const id = nextId++;
   const shell = getShell();
-  const title = path.basename(cwd || os.homedir());
+  const resolvedCwd = cwd || os.homedir();
+  const title = resolveDirectoryName(resolvedCwd);
   const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
-    cwd: cwd || os.homedir(),
+    cwd: resolvedCwd,
     env: getTerminalEnv(title),
   });
   let tailBuffer = '';
@@ -458,7 +513,7 @@ ipcMain.handle('create-terminal', (_event, cwd) => {
 
   ptyProcess.onExit(({ exitCode }) => {
     const term = terminals.get(id);
-    const exitTitle = term ? term.title : title;
+    const exitTitle = term ? resolveDirectoryName(term.cwd) : title;
     terminals.delete(id);
     terminalOrder = terminalOrder.filter(oid => oid !== id);
 
@@ -471,10 +526,10 @@ ipcMain.handle('create-terminal', (_event, cwd) => {
     }
   });
 
-  terminals.set(id, { pty: ptyProcess, cwd, title, spawnName: title, tailBuffer: '', lastDataTime: Date.now() });
+  terminals.set(id, { pty: ptyProcess, cwd: resolvedCwd, spawnName: title, tailBuffer: '', lastDataTime: Date.now() });
   terminalOrder.push(id);
   persistTerminals();
-  return { id, cwd, title };
+  return { id, cwd: resolvedCwd, title };
 });
 
 ipcMain.on('terminal-input', (_event, { id, data }) => {
@@ -503,17 +558,17 @@ ipcMain.handle('get-terminals', () => {
   // Ordered terminals first
   for (const id of terminalOrder) {
     const term = terminals.get(id);
-    if (term) list.push({ id, cwd: term.cwd, title: term.title, ghost: false, lastDataTime: term.lastDataTime });
+    if (term) list.push({ id, cwd: term.cwd, title: resolveDirectoryName(term.cwd), ghost: false, lastDataTime: term.lastDataTime });
   }
   // Any terminals not in order array (safety fallback)
   for (const [id, term] of terminals) {
     if (!terminalOrder.includes(id)) {
-      list.push({ id, cwd: term.cwd, title: term.title, ghost: false, lastDataTime: term.lastDataTime });
+      list.push({ id, cwd: term.cwd, title: resolveDirectoryName(term.cwd), ghost: false, lastDataTime: term.lastDataTime });
     }
   }
   // Ghosts always last
   savedTerminals.forEach((ghost, i) => {
-    list.push({ id: `ghost-${i}`, cwd: ghost.cwd, title: ghost.title, ghost: true });
+    list.push({ id: `ghost-${i}`, cwd: ghost.cwd, title: resolveDirectoryName(ghost.cwd), ghost: true });
   });
   return list;
 });
@@ -533,18 +588,28 @@ ipcMain.handle('remove-saved-terminal', (_event, index) => {
 });
 
 ipcMain.handle('rename-terminal', (_event, { id, newTitle }) => {
+  // Find the cwd and update the directory names registry
+  let cwd = null;
   if (typeof id === 'string' && id.startsWith('ghost-')) {
     const index = parseInt(id.replace('ghost-', ''), 10);
     if (index >= 0 && index < savedTerminals.length) {
-      savedTerminals[index].title = newTitle;
-      persistTerminals();
+      cwd = savedTerminals[index].cwd;
     }
   } else {
     const term = terminals.get(id);
-    if (term) {
-      term.title = newTitle;
-      persistTerminals();
-    }
+    if (term) cwd = term.cwd;
+  }
+  if (cwd) {
+    directoryNames[cwd] = newTitle;
+    persistDirectoryNames();
+  }
+  return true;
+});
+
+ipcMain.handle('rename-directory', (_event, { cwd, newName }) => {
+  if (cwd && newName) {
+    directoryNames[cwd] = newName;
+    persistDirectoryNames();
   }
   return true;
 });
@@ -552,12 +617,19 @@ ipcMain.handle('rename-terminal', (_event, { id, newTitle }) => {
 // --- Favorites IPC ---
 
 ipcMain.handle('get-favorites', () => {
-  return favorites.map(f => ({ name: f.name, cwd: f.cwd }));
+  return favorites.map(f => ({ name: resolveDirectoryName(f.cwd), cwd: f.cwd }));
 });
 
 ipcMain.handle('add-favorite', (_event, { name, cwd }) => {
   if (favorites.some(f => f.cwd === cwd)) return false;
-  favorites.push({ name, cwd });
+  favorites.push({ cwd });
+  // If a custom name was provided and no registry entry exists, add it
+  if (name && name !== path.basename(cwd)) {
+    if (!directoryNames[cwd]) {
+      directoryNames[cwd] = name;
+      persistDirectoryNames();
+    }
+  }
   persistFavorites();
   return true;
 });
@@ -571,6 +643,15 @@ ipcMain.handle('remove-favorite', (_event, cwd) => {
   return true;
 });
 
+ipcMain.handle('rename-favorite', (_event, { cwd, newName }) => {
+  // Kept for backward compatibility — updates the directory names registry
+  if (cwd && newName) {
+    directoryNames[cwd] = newName;
+    persistDirectoryNames();
+  }
+  return true;
+});
+
 // --- Dashboard IPC ---
 
 ipcMain.handle('get-dashboard-data', () => {
@@ -578,7 +659,7 @@ ipcMain.handle('get-dashboard-data', () => {
   for (const [id, term] of terminals) {
     termList.push({
       id,
-      title: term.title,
+      title: resolveDirectoryName(term.cwd),
       cwd: term.cwd,
       tailText: term.tailBuffer || '',
       lastDataTime: term.lastDataTime || 0,

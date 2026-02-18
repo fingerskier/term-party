@@ -146,7 +146,7 @@ function updateSidebarActiveStates() {
 
 // ---- Sidebar rendering ----
 
-function startInlineRename(li, termId, titleSpan) {
+function startInlineRename(li, termId, titleSpan, termCwd) {
   const original = titleSpan.textContent;
   titleSpan.style.display = 'none';
 
@@ -166,7 +166,13 @@ function startInlineRename(li, termId, titleSpan) {
     titleSpan.style.display = '';
     if (newName && newName !== original) {
       titleSpan.textContent = newName;
-      window.termParty.renameTerminal(termId, newName);
+      window.termParty.renameDirectory(termCwd, newName);
+      // Refresh both terminal list and favorites panel
+      refreshList();
+      if (activeViewId === 'favorites') {
+        const view = specialViews.get('favorites');
+        if (view) renderFavoritesPanel(view.wrapper);
+      }
     }
   }
   function cancel() {
@@ -319,7 +325,7 @@ function renderList(terminals) {
       renameItem.addEventListener('click', (ev) => {
         ev.stopPropagation();
         ctxMenu.style.display = 'none';
-        startInlineRename(li, t.id, title);
+        startInlineRename(li, t.id, title, t.cwd);
       });
       ctxMenu.appendChild(renameItem);
       ctxMenu.style.left = e.clientX + 'px';
@@ -332,6 +338,8 @@ function renderList(terminals) {
 }
 
 async function refreshList() {
+  // Skip refresh while an inline rename is active to avoid destroying the input
+  if (document.querySelector('.rename-input')) return;
   await loadAndRenderFavorites();
   const terminals = await window.termParty.getTerminals();
   renderList(terminals);
@@ -367,6 +375,10 @@ function renderFavoritesPanel(container) {
     const name = document.createElement('div');
     name.className = 'fav-name';
     name.textContent = fav.name;
+    name.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      startFavoriteRename(card, fav, name);
+    });
     card.appendChild(name);
 
     const cwdSpan = document.createElement('div');
@@ -389,6 +401,24 @@ function renderFavoritesPanel(container) {
       spawnFromFavorite(fav.cwd);
     });
 
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      ctxMenu.innerHTML = '';
+      const renameItem = document.createElement('div');
+      renameItem.className = 'ctx-menu-item';
+      renameItem.textContent = 'Rename';
+      renameItem.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        ctxMenu.style.display = 'none';
+        startFavoriteRename(card, fav, name);
+      });
+      ctxMenu.appendChild(renameItem);
+      ctxMenu.style.left = e.clientX + 'px';
+      ctxMenu.style.top = e.clientY + 'px';
+      ctxMenu.style.display = '';
+    });
+
     gridEl.appendChild(card);
   }
 }
@@ -397,6 +427,51 @@ async function spawnFromFavorite(cwd) {
   const info = await window.termParty.createTerminal(cwd);
   activateTerminal(info.id);
   refreshList();
+}
+
+function startFavoriteRename(card, fav, nameEl) {
+  const original = nameEl.textContent;
+  nameEl.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.className = 'rename-input';
+  input.value = original;
+  card.insertBefore(input, nameEl.nextSibling);
+  input.focus();
+  input.select();
+
+  let committed = false;
+  function commit() {
+    if (committed) return;
+    committed = true;
+    const newName = input.value.trim();
+    input.remove();
+    nameEl.style.display = '';
+    if (newName && newName !== original) {
+      nameEl.textContent = newName;
+      window.termParty.renameDirectory(fav.cwd, newName);
+      // Refresh both favorites and terminal list so both reflect the new name
+      loadAndRenderFavorites().then(() => {
+        const view = specialViews.get('favorites');
+        if (view) renderFavoritesPanel(view.wrapper);
+      });
+      refreshList();
+    }
+  }
+  function cancel() {
+    if (committed) return;
+    committed = true;
+    input.remove();
+    nameEl.style.display = '';
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    e.stopPropagation();
+  });
+  input.addEventListener('blur', commit);
+  input.addEventListener('click', (e) => e.stopPropagation());
 }
 
 async function removeFavorite(cwd) {
