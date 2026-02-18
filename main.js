@@ -19,6 +19,7 @@ const TAIL_BUFFER_SIZE = 4096; // bytes
 
 // --- Dude database (lazy, read-only) ---
 let dudeDb = null;
+let embedderPromise = null;
 
 function getSavePath() {
   return path.join(app.getPath('userData'), 'terminals.json');
@@ -155,6 +156,56 @@ function closeDudeDb() {
     try { dudeDb.close(); } catch {}
     dudeDb = null;
   }
+}
+
+async function getEmbedder() {
+  if (!embedderPromise) {
+    embedderPromise = import('@huggingface/transformers')
+      .then(({ pipeline }) => pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2'));
+  }
+  return embedderPromise;
+}
+
+function embeddingBlobToFloat32Array(blob) {
+  if (!blob) return null;
+  const buffer = Buffer.isBuffer(blob) ? blob : Buffer.from(blob);
+  if (buffer.length % Float32Array.BYTES_PER_ELEMENT !== 0) return null;
+  if (buffer.byteOffset % Float32Array.BYTES_PER_ELEMENT === 0) {
+    return new Float32Array(buffer.buffer, buffer.byteOffset, buffer.length / Float32Array.BYTES_PER_ELEMENT);
+  }
+  const copied = Buffer.from(buffer);
+  return new Float32Array(copied.buffer, copied.byteOffset, copied.length / Float32Array.BYTES_PER_ELEMENT);
+}
+
+function cosineSimilarity(queryVector, recordEmbeddingBlob) {
+  const recordVector = embeddingBlobToFloat32Array(recordEmbeddingBlob);
+  if (!recordVector || queryVector.length !== recordVector.length) return null;
+
+  let dot = 0;
+  for (let i = 0; i < queryVector.length; i += 1) {
+    dot += queryVector[i] * recordVector[i];
+  }
+  return dot;
+}
+
+function buildFilterSQL(filters, params = {}) {
+  const conditions = [];
+  if (filters?.kind && filters.kind !== 'all') {
+    conditions.push('r.kind = @kind');
+    params.kind = filters.kind;
+  }
+  if (filters?.status && filters.status !== 'all') {
+    conditions.push('r.status = @status');
+    params.status = filters.status;
+  }
+  if (filters?.project && filters.project !== '*') {
+    conditions.push('p.name = @project');
+    params.project = filters.project;
+  }
+  return {
+    clause: conditions.length ? ` AND ${conditions.join(' AND ')}` : '',
+    params,
+  };
 }
 
 // --- System stats ---
@@ -492,30 +543,66 @@ ipcMain.handle('dude-get-record', (_event, id) => {
   }
 });
 
-ipcMain.handle('dude-search', (_event, params) => {
+ipcMain.handle('dude-search', async (_event, params) => {
   try {
     const db = openDudeDb();
     if (!db) return { error: 'Database not found' };
-    const { query, ...filters } = params;
-    const pattern = `%${query}%`;
-    let sql = `SELECT r.id, r.kind, r.title, r.status, p.name AS project, r.updated_at
-               FROM record r JOIN project p ON r.project_id = p.id
-               WHERE (r.title LIKE @pattern OR r.body LIKE @pattern)`;
-    const sqlParams = { pattern };
-    if (filters?.kind && filters.kind !== 'all') {
-      sql += ' AND r.kind = @kind';
-      sqlParams.kind = filters.kind;
+
+    const query = (params?.query || '').trim();
+    const { query: _ignored, ...filters } = params || {};
+    if (!query) return [];
+
+    const filterState = buildFilterSQL(filters);
+
+    const embedder = await getEmbedder();
+    const queryEmbeddingResult = await embedder(query, { pooling: 'mean', normalize: true });
+    const queryVector = queryEmbeddingResult?.data || queryEmbeddingResult;
+
+    if (!(queryVector instanceof Float32Array)) {
+      throw new Error('Failed to generate query embedding');
     }
-    if (filters?.status && filters.status !== 'all') {
-      sql += ' AND r.status = @status';
-      sqlParams.status = filters.status;
+
+    const semanticSql = `SELECT r.id, r.kind, r.title, r.status, p.name AS project, r.updated_at, r.embedding
+                         FROM record r JOIN project p ON r.project_id = p.id
+                         WHERE r.embedding IS NOT NULL${filterState.clause}`;
+    const semanticRows = db.prepare(semanticSql).all(filterState.params);
+
+    const semanticResults = semanticRows
+      .map((row) => {
+        const similarity = cosineSimilarity(queryVector, row.embedding);
+        if (similarity === null || similarity < 0.3) return null;
+        const { embedding, ...record } = row;
+        return { ...record, similarity };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 10)
+      .map(({ similarity, ...record }) => record);
+
+    const exactPattern = `%${query}%`;
+    const exactFilterState = buildFilterSQL(filters, { pattern: exactPattern });
+    const exactSql = `SELECT r.id, r.kind, r.title, r.status, p.name AS project, r.updated_at
+                      FROM record r JOIN project p ON r.project_id = p.id
+                      WHERE (r.title LIKE @pattern OR r.body LIKE @pattern)${exactFilterState.clause}
+                      ORDER BY r.updated_at DESC
+                      LIMIT 3`;
+    const exactResults = db.prepare(exactSql).all(exactFilterState.params);
+
+    const merged = [];
+    const seenIds = new Set();
+
+    for (const result of semanticResults) {
+      merged.push(result);
+      seenIds.add(result.id);
     }
-    if (filters?.project && filters.project !== '*') {
-      sql += ' AND p.name = @project';
-      sqlParams.project = filters.project;
+
+    for (const result of exactResults) {
+      if (seenIds.has(result.id)) continue;
+      merged.push(result);
+      seenIds.add(result.id);
     }
-    sql += ' ORDER BY r.updated_at DESC LIMIT 100';
-    return db.prepare(sql).all(sqlParams);
+
+    return merged;
   } catch (err) {
     return { error: err.message };
   }

@@ -20,6 +20,7 @@
   "author": "Fingerskier",
   "license": "MIT",
   "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^11.0.0",
@@ -31,7 +32,9 @@
     "npmRebuild": false,
     "asarUnpack": [
       "node_modules/node-pty/**",
-      "node_modules/better-sqlite3/**"
+      "node_modules/better-sqlite3/**",
+      "node_modules/@huggingface/**",
+      "node_modules/onnxruntime-node/**"
     ],
     "directories": {
       "output": "dist"
