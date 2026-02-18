@@ -503,12 +503,12 @@ ipcMain.handle('get-terminals', () => {
   // Ordered terminals first
   for (const id of terminalOrder) {
     const term = terminals.get(id);
-    if (term) list.push({ id, cwd: term.cwd, title: term.title, ghost: false });
+    if (term) list.push({ id, cwd: term.cwd, title: term.title, ghost: false, lastDataTime: term.lastDataTime });
   }
   // Any terminals not in order array (safety fallback)
   for (const [id, term] of terminals) {
     if (!terminalOrder.includes(id)) {
-      list.push({ id, cwd: term.cwd, title: term.title, ghost: false });
+      list.push({ id, cwd: term.cwd, title: term.title, ghost: false, lastDataTime: term.lastDataTime });
     }
   }
   // Ghosts always last
