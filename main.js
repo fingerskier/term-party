@@ -17,15 +17,9 @@ const recentExits = []; // { id, title, exitCode, timestamp } — last 20
 const MAX_RECENT_EXITS = 20;
 const TAIL_BUFFER_SIZE = 4096; // bytes
 
-// --- Scratchpad ---
-let scratchpadDir;
-const scratchpadIndex = new Map(); // relativePath -> { name, size, mtime, content }
-let scratchpadWatcher = null;
-
-// --- LanceDB (lazy) ---
-let lanceDb = null;
-let lanceTable = null;
-const VECTOR_DIM = 128;
+// --- Dude MCP client (lazy) ---
+let dudeClient = null;
+let dudeTransport = null;
 
 function getSavePath() {
   return path.join(app.getPath('userData'), 'terminals.json');
@@ -142,241 +136,46 @@ function getAppIcon() {
   return path.join(__dirname, 'icon.icns');
 }
 
-// --- Scratchpad: file index management ---
+// --- Dude MCP plugin detection and client ---
 
-function initScratchpad() {
-  scratchpadDir = path.join(app.getPath('userData'), 'scratchpad');
+function findDudePlugin() {
+  const baseDir = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'fingerskier-plugins', 'dude');
   try {
-    fs.mkdirSync(scratchpadDir, { recursive: true });
-  } catch {
-    // already exists
-  }
-
-  // Create .claude/mcp.json so Claude Code agents auto-discover the MCP server
-  const mcpServerPath = path.join(__dirname, 'mcp-server.js');
-  const claudeDir = path.join(scratchpadDir, '.claude');
-  try {
-    fs.mkdirSync(claudeDir, { recursive: true });
-    const mcpConfig = {
-      mcpServers: {
-        'term-party-scratchpad': {
-          command: 'node',
-          args: [mcpServerPath],
-          env: { TERM_PARTY_SCRATCHPAD: scratchpadDir },
-        },
-      },
-    };
-    fs.writeFileSync(path.join(claudeDir, 'mcp.json'), JSON.stringify(mcpConfig, null, 2));
-  } catch {}
-
-  indexScratchpadDir();
-  try {
-    scratchpadWatcher = fs.watch(scratchpadDir, { recursive: true }, (eventType, filename) => {
-      if (filename) {
-        reindexFile(filename);
-      } else {
-        indexScratchpadDir();
-      }
-    });
-  } catch {
-    // watcher not supported on all platforms with recursive
-    // fallback: re-index on each list/search call
-  }
-}
-
-function indexScratchpadDir() {
-  scratchpadIndex.clear();
-  try {
-    indexDirRecursive(scratchpadDir, '');
-  } catch {
-    // empty or inaccessible
-  }
-}
-
-function indexDirRecursive(dirPath, relativeTo) {
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const relPath = relativeTo ? `${relativeTo}/${entry.name}` : entry.name;
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      indexDirRecursive(fullPath, relPath);
-    } else if (entry.isFile()) {
+    const versions = fs.readdirSync(baseDir).sort().reverse();
+    for (const ver of versions) {
+      const candidate = path.join(baseDir, ver, 'bin', 'dude-claude.js');
       try {
-        const stat = fs.statSync(fullPath);
-        const content = fs.readFileSync(fullPath, 'utf-8');
-        scratchpadIndex.set(relPath, {
-          name: entry.name,
-          size: stat.size,
-          mtime: stat.mtimeMs,
-          content,
-        });
-      } catch {
-        // skip unreadable files
-      }
+        fs.accessSync(candidate, fs.constants.R_OK);
+        return candidate;
+      } catch {}
     }
-  }
-}
-
-function reindexFile(filename) {
-  const normalizedFilename = filename.replace(/\\/g, '/');
-  const fullPath = path.join(scratchpadDir, normalizedFilename);
-  try {
-    const stat = fs.statSync(fullPath);
-    if (stat.isFile()) {
-      const content = fs.readFileSync(fullPath, 'utf-8');
-      scratchpadIndex.set(normalizedFilename, {
-        name: path.basename(normalizedFilename),
-        size: stat.size,
-        mtime: stat.mtimeMs,
-        content,
-      });
-      // Update lancedb async if available
-      upsertLanceDoc(normalizedFilename, path.basename(normalizedFilename), content, stat.mtimeMs).catch(() => {});
-      // Notify terminals about JSONL channel changes
-      notifyJsonlChange(normalizedFilename);
-    }
-  } catch {
-    // File may have been deleted
-    scratchpadIndex.delete(normalizedFilename);
-    removeLanceDoc(normalizedFilename).catch(() => {});
-  }
-}
-
-function notifyJsonlChange(normalizedFilename) {
-  if (!normalizedFilename.endsWith('.jsonl')) return;
-
-  // Parse path: {project}/{terminal-name}.jsonl (must be exactly 2 parts)
-  const parts = normalizedFilename.split('/');
-  if (parts.length !== 2) return;
-
-  const project = parts[0];
-  const fromTerminal = path.basename(parts[1], '.jsonl');
-
-  // Find terminals whose cwd basename matches the project, excluding the writer
-  const notifyIds = [];
-  for (const [id, term] of terminals) {
-    const termProject = path.basename(term.cwd || '');
-    if (termProject === project && term.spawnName !== fromTerminal) {
-      notifyIds.push(id);
-    }
-  }
-
-  if (notifyIds.length > 0 && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('scratchpad-update', {
-      project,
-      file: normalizedFilename,
-      from: fromTerminal,
-      terminalIds: notifyIds,
-    });
-  }
-}
-
-function searchScratchpadText(query) {
-  const lower = query.toLowerCase();
-  const results = [];
-  for (const [relPath, file] of scratchpadIndex) {
-    const nameMatch = file.name.toLowerCase().includes(lower);
-    const contentMatch = file.content.toLowerCase().includes(lower);
-    if (nameMatch || contentMatch) {
-      let snippet = '';
-      if (contentMatch) {
-        const idx = file.content.toLowerCase().indexOf(lower);
-        const start = Math.max(0, idx - 40);
-        const end = Math.min(file.content.length, idx + query.length + 40);
-        snippet = (start > 0 ? '...' : '') + file.content.slice(start, end) + (end < file.content.length ? '...' : '');
-      }
-      results.push({ path: relPath, name: file.name, mtime: file.mtime, snippet, score: nameMatch ? 1.0 : 0.5 });
-    }
-  }
-  return results.sort((a, b) => b.score - a.score || b.mtime - a.mtime);
-}
-
-// --- LanceDB vector search ---
-
-function tokenize(text) {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
-}
-
-function hashVector(text) {
-  const vec = new Float32Array(VECTOR_DIM);
-  const tokens = tokenize(text);
-  for (const token of tokens) {
-    let hash = 0;
-    for (let i = 0; i < token.length; i++) {
-      hash = ((hash << 5) - hash + token.charCodeAt(i)) | 0;
-    }
-    const bucket = ((hash % VECTOR_DIM) + VECTOR_DIM) % VECTOR_DIM;
-    vec[bucket] += 1;
-  }
-  // L2 normalize
-  let norm = 0;
-  for (let i = 0; i < VECTOR_DIM; i++) norm += vec[i] * vec[i];
-  norm = Math.sqrt(norm);
-  if (norm > 0) {
-    for (let i = 0; i < VECTOR_DIM; i++) vec[i] /= norm;
-  }
-  return vec;
-}
-
-async function initLanceDb() {
-  try {
-    const lancedb = require('@lancedb/lancedb');
-    const dbPath = path.join(app.getPath('userData'), 'scratchpad.lance');
-    lanceDb = await lancedb.connect(dbPath);
-    const tableNames = await lanceDb.tableNames();
-    if (tableNames.includes('documents')) {
-      lanceTable = await lanceDb.openTable('documents');
-    } else {
-      // Create with a dummy row then delete it
-      lanceTable = await lanceDb.createTable('documents', [{
-        path: '__init__',
-        name: '__init__',
-        content: '',
-        mtime: 0,
-        vector: Array.from(new Float32Array(VECTOR_DIM)),
-      }]);
-      try { await lanceTable.delete('path = "__init__"'); } catch {}
-    }
-    // Index existing scratchpad files
-    for (const [relPath, file] of scratchpadIndex) {
-      await upsertLanceDoc(relPath, file.name, file.content, file.mtime);
-    }
-  } catch (err) {
-    console.warn('LanceDB not available, semantic search disabled:', err.message);
-    lanceDb = null;
-    lanceTable = null;
-  }
-}
-
-async function upsertLanceDoc(relPath, name, content, mtime) {
-  if (!lanceTable) return;
-  try {
-    try { await lanceTable.delete(`path = "${relPath.replace(/"/g, '\\"')}"`); } catch {}
-    const vector = Array.from(hashVector(name + ' ' + content));
-    await lanceTable.add([{ path: relPath, name, content, mtime, vector }]);
   } catch {}
+  return null;
 }
 
-async function removeLanceDoc(relPath) {
-  if (!lanceTable) return;
-  try { await lanceTable.delete(`path = "${relPath.replace(/"/g, '\\"')}"`); } catch {}
+async function connectDudeClient() {
+  if (dudeClient) return dudeClient;
+  const pluginPath = findDudePlugin();
+  if (!pluginPath) throw new Error('Dude plugin not installed');
+
+  const { Client } = require('@modelcontextprotocol/sdk/dist/cjs/client/index.js');
+  const { StdioClientTransport } = require('@modelcontextprotocol/sdk/dist/cjs/client/stdio.js');
+
+  dudeTransport = new StdioClientTransport({
+    command: 'node',
+    args: [pluginPath, 'mcp'],
+    stderr: 'pipe',
+  });
+  dudeClient = new Client({ name: 'term-party', version: '1.0.0' }, { capabilities: {} });
+  await dudeClient.connect(dudeTransport);
+  return dudeClient;
 }
 
-async function semanticSearch(query, limit = 10) {
-  if (!lanceTable) return [];
-  try {
-    const qVec = Array.from(hashVector(query));
-    const results = await lanceTable.search(qVec).limit(limit).toArray();
-    return results.map(r => ({
-      path: r.path,
-      name: r.name,
-      mtime: r.mtime,
-      snippet: r.content ? r.content.slice(0, 120) : '',
-      score: r._distance != null ? 1 / (1 + r._distance) : 0,
-    }));
-  } catch {
-    return [];
-  }
+async function callDudeTool(toolName, args = {}) {
+  const client = await connectDudeClient();
+  const result = await client.callTool({ name: toolName, arguments: args });
+  const text = result.content?.[0]?.text;
+  return text ? JSON.parse(text) : null;
 }
 
 // --- System stats ---
@@ -405,18 +204,8 @@ function getSystemStats() {
 
 function getTerminalEnv(terminalName) {
   const env = { ...process.env };
-  if (scratchpadDir) {
-    env.TERM_PARTY_SCRATCHPAD = scratchpadDir;
-  }
   if (terminalName) {
     env.TERM_PARTY_NAME = terminalName;
-  }
-  const mcpServerPath = path.join(__dirname, 'mcp-server.js');
-  try {
-    fs.accessSync(mcpServerPath, fs.constants.R_OK);
-    env.TERM_PARTY_MCP_SERVER = mcpServerPath;
-  } catch {
-    // mcp-server.js not yet created
   }
   return env;
 }
@@ -453,8 +242,6 @@ app.whenReady().then(async () => {
   directoryNames = loadDirectoryNames();
   migrateToDirectoryNames();
   terminalOrder = [...terminals.keys()];
-  initScratchpad();
-  await initLanceDb();
 });
 
 app.on('window-all-closed', async () => {
@@ -463,9 +250,10 @@ app.on('window-all-closed', async () => {
     term.pty.kill();
   }
   terminals.clear();
-  if (scratchpadWatcher) {
-    scratchpadWatcher.close();
-    scratchpadWatcher = null;
+  if (dudeTransport) {
+    try { await dudeTransport.close(); } catch {}
+    dudeTransport = null;
+    dudeClient = null;
   }
   app.quit();
 });
@@ -672,61 +460,41 @@ ipcMain.handle('get-system-stats', () => {
   return getSystemStats();
 });
 
-// --- Scratchpad IPC ---
+// --- Dude IPC ---
 
-ipcMain.handle('get-scratchpad-path', () => {
-  return scratchpadDir;
+ipcMain.handle('dude-check-installed', () => {
+  return findDudePlugin() !== null;
 });
 
-ipcMain.handle('list-scratchpad-files', () => {
-  const files = [];
-  for (const [relPath, file] of scratchpadIndex) {
-    files.push({ path: relPath, name: file.name, size: file.size, mtime: file.mtime });
+ipcMain.handle('dude-list-projects', async () => {
+  try {
+    return await callDudeTool('list_projects', {});
+  } catch (err) {
+    return { error: err.message };
   }
-  return files.sort((a, b) => b.mtime - a.mtime);
 });
 
-ipcMain.handle('read-scratchpad-file', (_event, relativePath) => {
-  const file = scratchpadIndex.get(relativePath);
-  if (!file) return null;
-  return { path: relativePath, name: file.name, content: file.content, size: file.size, mtime: file.mtime };
+ipcMain.handle('dude-list-records', async (_event, filters) => {
+  try {
+    return await callDudeTool('list_records', filters || {});
+  } catch (err) {
+    return { error: err.message };
+  }
 });
 
-ipcMain.handle('search-scratchpad', (_event, query) => {
-  if (!query || !query.trim()) {
-    const files = [];
-    for (const [relPath, file] of scratchpadIndex) {
-      files.push({ path: relPath, name: file.name, mtime: file.mtime, snippet: '', score: 0 });
-    }
-    return files.sort((a, b) => b.mtime - a.mtime);
+ipcMain.handle('dude-get-record', async (_event, id) => {
+  try {
+    return await callDudeTool('get_record', { id });
+  } catch (err) {
+    return { error: err.message };
   }
-  return searchScratchpadText(query);
 });
 
-ipcMain.handle('search-scratchpad-semantic', async (_event, query) => {
-  if (!query || !query.trim()) {
-    const files = [];
-    for (const [relPath, file] of scratchpadIndex) {
-      files.push({ path: relPath, name: file.name, mtime: file.mtime, snippet: '', score: 0 });
-    }
-    return files.sort((a, b) => b.mtime - a.mtime);
+ipcMain.handle('dude-search', async (_event, params) => {
+  try {
+    const { query, ...filters } = params;
+    return await callDudeTool('search', { query, ...filters });
+  } catch (err) {
+    return { error: err.message };
   }
-
-  // Combine text + vector results
-  const textResults = searchScratchpadText(query);
-  const vectorResults = await semanticSearch(query);
-
-  // Merge: deduplicate by path, boost score for items found in both
-  const merged = new Map();
-  for (const r of textResults) {
-    merged.set(r.path, { ...r, score: r.score });
-  }
-  for (const r of vectorResults) {
-    if (merged.has(r.path)) {
-      merged.get(r.path).score += r.score;
-    } else {
-      merged.set(r.path, { ...r });
-    }
-  }
-  return [...merged.values()].sort((a, b) => b.score - a.score);
 });

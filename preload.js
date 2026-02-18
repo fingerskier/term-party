@@ -19,12 +19,12 @@ contextBridge.exposeInMainWorld('termParty', {
   getDashboardData: () => ipcRenderer.invoke('get-dashboard-data'),
   getSystemStats: () => ipcRenderer.invoke('get-system-stats'),
 
-  // Scratchpad
-  getScratchpadPath: () => ipcRenderer.invoke('get-scratchpad-path'),
-  listScratchpadFiles: () => ipcRenderer.invoke('list-scratchpad-files'),
-  readScratchpadFile: (relativePath) => ipcRenderer.invoke('read-scratchpad-file', relativePath),
-  searchScratchpad: (query) => ipcRenderer.invoke('search-scratchpad', query),
-  searchScratchpadSemantic: (query) => ipcRenderer.invoke('search-scratchpad-semantic', query),
+  // Dude
+  dudeCheckInstalled: () => ipcRenderer.invoke('dude-check-installed'),
+  dudeListProjects: () => ipcRenderer.invoke('dude-list-projects'),
+  dudeListRecords: (filters) => ipcRenderer.invoke('dude-list-records', filters),
+  dudeGetRecord: (id) => ipcRenderer.invoke('dude-get-record', id),
+  dudeSearch: (query, filters) => ipcRenderer.invoke('dude-search', { query, ...filters }),
 
   sendInput: (id, data) => ipcRenderer.send('terminal-input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('terminal-resize', { id, cols, rows }),
@@ -41,9 +41,4 @@ contextBridge.exposeInMainWorld('termParty', {
     return () => ipcRenderer.removeListener('terminal-exited', listener);
   },
 
-  onScratchpadUpdate: (callback) => {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on('scratchpad-update', listener);
-    return () => ipcRenderer.removeListener('scratchpad-update', listener);
-  },
 });

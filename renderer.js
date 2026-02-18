@@ -6,7 +6,7 @@ const containerEl = document.getElementById('terminal-container');
 const emptyStateEl = document.getElementById('empty-state');
 const addBtn = document.getElementById('add-terminal');
 const openFavoritesBtn = document.getElementById('open-favorites');
-const openScratchpadBtn = document.getElementById('open-scratchpad');
+const openDudeBtn = document.getElementById('open-dude');
 const appTitleEl = document.getElementById('app-title');
 const viewerEl = document.getElementById('viewer');
 
@@ -15,10 +15,9 @@ const termViews = new Map();
 // Map of string -> { wrapper, onActivate?, onDeactivate? }
 const specialViews = new Map();
 
-let activeViewId = null; // number (terminal) or string ('dashboard', 'favorites', 'scratchpad')
+let activeViewId = null; // number (terminal) or string ('dashboard', 'favorites', 'dude')
 let currentFavorites = [];
 let favoriteCwds = new Set();
-const termNotifications = new Map(); // terminal id -> boolean
 
 // ---- Context menu ----
 
@@ -108,7 +107,6 @@ function activateTerminal(id) {
   }
 
   activeViewId = id;
-  termNotifications.delete(id);
   emptyStateEl.style.display = 'none';
 
   let view = termViews.get(id);
@@ -133,7 +131,7 @@ function activateTerminal(id) {
 function updateSidebarActiveStates() {
   // Sidebar buttons
   openFavoritesBtn.classList.toggle('active', activeViewId === 'favorites');
-  openScratchpadBtn.classList.toggle('active', activeViewId === 'scratchpad');
+  openDudeBtn.classList.toggle('active', activeViewId === 'dude');
 
   // Terminal list items
   for (const li of terminalListEl.querySelectorAll('li')) {
@@ -290,13 +288,6 @@ function renderList(terminals) {
         killTerminal(t.id);
       });
       li.addEventListener('click', () => activateTerminal(t.id));
-    }
-
-    // Notification badge for non-ghost terminals with pending updates
-    if (!t.ghost && termNotifications.has(Number(t.id))) {
-      const badge = document.createElement('span');
-      badge.className = 'term-notify-badge';
-      li.appendChild(badge);
     }
 
     // Star button for non-ghost terminals
@@ -663,13 +654,6 @@ window.termParty.onExit(({ id }) => {
   refreshList();
 });
 
-window.termParty.onScratchpadUpdate(({ terminalIds }) => {
-  for (const id of terminalIds) {
-    if (id !== activeViewId) termNotifications.set(id, true);
-  }
-  refreshList();
-});
-
 // ---- Resize handling ----
 
 window.addEventListener('resize', () => {
@@ -728,7 +712,7 @@ document.addEventListener('keydown', (e) => {
 // ---- Sidebar button handlers ----
 
 openFavoritesBtn.addEventListener('click', () => activateView('favorites'));
-openScratchpadBtn.addEventListener('click', () => activateView('scratchpad'));
+openDudeBtn.addEventListener('click', () => activateView('dude'));
 appTitleEl.addEventListener('click', () => activateView('dashboard'));
 
 // ========================================================
@@ -890,190 +874,261 @@ function stripAnsi(str) {
   return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
 }
 
-// ---- Scratchpad panel ----
+// ---- Dude browser panel ----
 
-let scratchpadSelectedFile = null;
-let scratchpadPath = null;
+let dudeSelectedRecordId = null;
+let dudeProjects = [];
 
-registerSpecialView('scratchpad', {
+registerSpecialView('dude', {
   buildFn(wrapper) {
-    wrapper.classList.add('scratchpad-panel');
+    wrapper.classList.add('dude-panel');
     wrapper.innerHTML = `
-      <div class="scratch-sidebar">
-        <div class="scratch-search-wrap">
-          <div class="view-panel-header">Scratchpad</div>
-          <input type="text" class="scratch-search" placeholder="Search files...">
+      <div class="dude-sidebar">
+        <div class="dude-controls">
+          <div class="view-panel-header">Dude</div>
+          <input type="text" class="dude-search" placeholder="Search records...">
+          <div class="dude-filters">
+            <select class="dude-filter-kind">
+              <option value="all">All Kinds</option>
+              <option value="issue">Issue</option>
+              <option value="spec">Spec</option>
+              <option value="arch">Arch</option>
+              <option value="update">Update</option>
+            </select>
+            <select class="dude-filter-status">
+              <option value="all">All Status</option>
+              <option value="open">Open</option>
+              <option value="resolved">Resolved</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+          <select class="dude-filter-project">
+            <option value="*">All Projects</option>
+          </select>
         </div>
-        <div class="scratch-path-display"></div>
-        <ul class="scratch-file-list"></ul>
+        <ul class="dude-record-list"></ul>
       </div>
-      <div class="scratch-main">
-        <div class="scratch-preview-header" style="display:none;">
-          <span class="scratch-preview-title"></span>
-          <div class="scratch-send-to">
-            <button class="scratch-send-btn">Send To</button>
-            <div class="scratch-send-dropdown"></div>
+      <div class="dude-main">
+        <div class="dude-detail" style="display:none"></div>
+        <div class="dude-empty">Select a record to view</div>
+        <div class="dude-not-installed" style="display:none">
+          <div class="dude-not-installed-card">
+            <div class="icon">&#128218;</div>
+            <h3>Dude plugin not found</h3>
+            <p>Install the dude-claude-plugin to browse your project records, issues, and specifications.</p>
+            <a href="https://github.com/fingerskier/claude-plugins" target="_blank">View on GitHub</a>
           </div>
         </div>
-        <div class="scratch-preview"></div>
-        <div class="scratch-empty">Select a file to preview</div>
       </div>
     `;
 
-    const searchInput = wrapper.querySelector('.scratch-search');
+    const searchInput = wrapper.querySelector('.dude-search');
     let searchTimeout;
     searchInput.addEventListener('input', () => {
       clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => {
-        refreshScratchpadFiles(searchInput.value);
-      }, 200);
+      searchTimeout = setTimeout(() => dudeLoadRecords(wrapper), 500);
     });
 
-    const sendBtn = wrapper.querySelector('.scratch-send-btn');
-    const dropdown = wrapper.querySelector('.scratch-send-dropdown');
-    sendBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      dropdown.classList.toggle('open');
-      if (dropdown.classList.contains('open')) {
-        await populateSendToDropdown(dropdown);
-      }
-    });
+    const kindSelect = wrapper.querySelector('.dude-filter-kind');
+    const statusSelect = wrapper.querySelector('.dude-filter-status');
+    const projectSelect = wrapper.querySelector('.dude-filter-project');
 
-    document.addEventListener('click', () => {
-      dropdown.classList.remove('open');
-    });
+    kindSelect.addEventListener('change', () => dudeLoadRecords(wrapper));
+    statusSelect.addEventListener('change', () => dudeLoadRecords(wrapper));
+    projectSelect.addEventListener('change', () => dudeLoadRecords(wrapper));
   },
   async onActivate(wrapper) {
-    if (!scratchpadPath) {
-      scratchpadPath = await window.termParty.getScratchpadPath();
-    }
-    const pathDisplay = wrapper.querySelector('.scratch-path-display');
-    if (pathDisplay) pathDisplay.textContent = scratchpadPath;
+    const installed = await window.termParty.dudeCheckInstalled();
+    const notInstalledEl = wrapper.querySelector('.dude-not-installed');
+    const emptyEl = wrapper.querySelector('.dude-empty');
+    const sidebarEl = wrapper.querySelector('.dude-sidebar');
 
-    const searchInput = wrapper.querySelector('.scratch-search');
-    refreshScratchpadFiles(searchInput ? searchInput.value : '');
+    if (!installed) {
+      notInstalledEl.style.display = '';
+      emptyEl.style.display = 'none';
+      sidebarEl.style.display = 'none';
+      return;
+    }
+
+    notInstalledEl.style.display = 'none';
+    sidebarEl.style.display = '';
+
+    // Load projects into dropdown
+    const projectSelect = wrapper.querySelector('.dude-filter-project');
+    const projects = await window.termParty.dudeListProjects();
+    if (projects && !projects.error && Array.isArray(projects)) {
+      dudeProjects = projects;
+      // Rebuild options keeping the current selection
+      const current = projectSelect.value;
+      projectSelect.innerHTML = '<option value="*">All Projects</option>';
+      for (const p of projects) {
+        const opt = document.createElement('option');
+        opt.value = p.name || p.directory || '';
+        opt.textContent = p.name || p.directory || 'Unknown';
+        projectSelect.appendChild(opt);
+      }
+      if (current && current !== '*') projectSelect.value = current;
+    }
+
+    dudeLoadRecords(wrapper);
   },
 });
 
-async function refreshScratchpadFiles(query) {
-  const view = specialViews.get('scratchpad');
-  if (!view) return;
-  const wrapper = view.wrapper;
-  const listEl = wrapper.querySelector('.scratch-file-list');
+function dudeGetFilters(wrapper) {
+  const kind = wrapper.querySelector('.dude-filter-kind').value;
+  const status = wrapper.querySelector('.dude-filter-status').value;
+  const project = wrapper.querySelector('.dude-filter-project').value;
+  const filters = {};
+  if (kind !== 'all') filters.kind = kind;
+  if (status !== 'all') filters.status = status;
+  if (project !== '*') filters.project = project;
+  return filters;
+}
+
+async function dudeLoadRecords(wrapper) {
+  const listEl = wrapper.querySelector('.dude-record-list');
   if (!listEl) return;
 
-  let files;
-  if (query && query.trim()) {
-    files = await window.termParty.searchScratchpadSemantic(query);
+  const searchInput = wrapper.querySelector('.dude-search');
+  const query = searchInput ? searchInput.value.trim() : '';
+  const filters = dudeGetFilters(wrapper);
+
+  let records;
+  if (query) {
+    records = await window.termParty.dudeSearch(query, filters);
   } else {
-    files = await window.termParty.listScratchpadFiles();
+    records = await window.termParty.dudeListRecords(filters);
   }
 
   listEl.innerHTML = '';
-  if (files.length === 0) {
-    listEl.innerHTML = '<div class="panel-empty">No files in scratchpad</div>';
+
+  if (!records || records.error) {
+    listEl.innerHTML = `<div class="panel-empty">${records?.error || 'Failed to load records'}</div>`;
     return;
   }
 
-  for (const file of files) {
+  const items = Array.isArray(records) ? records : (records.results || []);
+
+  if (items.length === 0) {
+    listEl.innerHTML = '<div class="panel-empty">No records found</div>';
+    return;
+  }
+
+  for (const rec of items) {
     const li = document.createElement('li');
-    if (scratchpadSelectedFile === file.path) li.classList.add('selected');
+    li.dataset.recordId = String(rec.id);
+    if (dudeSelectedRecordId === rec.id) li.classList.add('selected');
 
-    const nameEl = document.createElement('div');
-    nameEl.className = 'scratch-file-name';
-    nameEl.textContent = file.name || file.path;
-    li.appendChild(nameEl);
+    const titleRow = document.createElement('div');
+    titleRow.className = 'dude-record-title-row';
 
-    const metaEl = document.createElement('div');
-    metaEl.className = 'scratch-file-meta';
-    metaEl.textContent = file.path + (file.mtime ? ' | ' + new Date(file.mtime).toLocaleString() : '');
-    li.appendChild(metaEl);
+    const kindBadge = document.createElement('span');
+    kindBadge.className = `kind-badge kind-${rec.kind || 'issue'}`;
+    kindBadge.textContent = rec.kind || 'issue';
+    titleRow.appendChild(kindBadge);
 
-    if (file.snippet) {
-      const snippetEl = document.createElement('div');
-      snippetEl.className = 'scratch-file-snippet';
-      snippetEl.textContent = file.snippet;
-      li.appendChild(snippetEl);
-    }
+    const title = document.createElement('span');
+    title.className = 'dude-record-title';
+    title.textContent = rec.title || '(untitled)';
+    titleRow.appendChild(title);
 
-    if (file.score > 0) {
-      const scoreEl = document.createElement('div');
-      scoreEl.className = 'scratch-file-score';
-      scoreEl.textContent = 'relevance: ' + file.score.toFixed(2);
-      li.appendChild(scoreEl);
-    }
+    li.appendChild(titleRow);
 
-    li.addEventListener('click', () => selectScratchpadFile(file.path));
+    const meta = document.createElement('div');
+    meta.className = 'dude-record-meta';
+    const parts = [];
+    if (rec.project) parts.push(rec.project);
+    if (rec.status) parts.push(rec.status);
+    if (rec.updated_at) parts.push(formatTime(new Date(rec.updated_at).getTime()));
+    meta.textContent = parts.join(' \u00b7 ');
+    li.appendChild(meta);
+
+    li.addEventListener('click', () => dudeSelectRecord(rec.id, wrapper));
     listEl.appendChild(li);
   }
 }
 
-async function selectScratchpadFile(relPath) {
-  scratchpadSelectedFile = relPath;
-  const view = specialViews.get('scratchpad');
-  if (!view) return;
-  const wrapper = view.wrapper;
+async function dudeSelectRecord(id, wrapper) {
+  dudeSelectedRecordId = id;
+  const detailEl = wrapper.querySelector('.dude-detail');
+  const emptyEl = wrapper.querySelector('.dude-empty');
 
-  const file = await window.termParty.readScratchpadFile(relPath);
-  const previewHeader = wrapper.querySelector('.scratch-preview-header');
-  const previewEl = wrapper.querySelector('.scratch-preview');
-  const emptyEl = wrapper.querySelector('.scratch-empty');
-  const titleEl = wrapper.querySelector('.scratch-preview-title');
+  const record = await window.termParty.dudeGetRecord(id);
 
-  if (file) {
-    previewHeader.style.display = '';
-    previewEl.style.display = '';
-    emptyEl.style.display = 'none';
-    titleEl.textContent = file.name;
-    previewEl.textContent = file.content;
-  } else {
-    previewHeader.style.display = 'none';
-    previewEl.style.display = 'none';
+  if (!record || record.error) {
+    detailEl.style.display = 'none';
     emptyEl.style.display = '';
-  }
-
-  // Update selected state in list
-  const listEl = wrapper.querySelector('.scratch-file-list');
-  for (const li of listEl.querySelectorAll('li')) {
-    li.classList.remove('selected');
-  }
-  // find and select the matching one
-  for (const li of listEl.querySelectorAll('li')) {
-    const nameEl = li.querySelector('.scratch-file-meta');
-    if (nameEl && nameEl.textContent.startsWith(relPath)) {
-      li.classList.add('selected');
-      break;
-    }
-  }
-}
-
-async function populateSendToDropdown(dropdown) {
-  dropdown.innerHTML = '';
-  const terminals = await window.termParty.getTerminals();
-  const activeTerminals = terminals.filter(t => !t.ghost);
-
-  if (activeTerminals.length === 0) {
-    const item = document.createElement('div');
-    item.className = 'scratch-send-dropdown-item';
-    item.textContent = 'No active terminals';
-    dropdown.appendChild(item);
+    emptyEl.textContent = record?.error || 'Failed to load record';
     return;
   }
 
-  for (const term of activeTerminals) {
-    const item = document.createElement('div');
-    item.className = 'scratch-send-dropdown-item';
-    item.textContent = term.title || term.cwd;
-    item.addEventListener('click', (e) => {
-      e.stopPropagation();
-      dropdown.classList.remove('open');
-      if (scratchpadSelectedFile && scratchpadPath) {
-        const fullPath = scratchpadPath + '/' + scratchpadSelectedFile;
-        const quotedPath = `"${fullPath.replace(/\\/g, '/')}"`;
-        window.termParty.sendInput(term.id, quotedPath);
-      }
-    });
-    dropdown.appendChild(item);
+  emptyEl.style.display = 'none';
+  detailEl.style.display = '';
+
+  detailEl.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'dude-detail-header';
+
+  const kindBadge = document.createElement('span');
+  kindBadge.className = `kind-badge kind-${record.kind || 'issue'}`;
+  kindBadge.textContent = record.kind || 'issue';
+  header.appendChild(kindBadge);
+
+  const statusBadge = document.createElement('span');
+  statusBadge.className = `status-badge status-${record.status || 'open'}`;
+  statusBadge.textContent = record.status || 'open';
+  header.appendChild(statusBadge);
+
+  detailEl.appendChild(header);
+
+  const title = document.createElement('div');
+  title.className = 'dude-detail-title';
+  title.textContent = record.title || '(untitled)';
+  detailEl.appendChild(title);
+
+  if (record.project) {
+    const project = document.createElement('div');
+    project.className = 'dude-detail-project';
+    project.textContent = record.project;
+    detailEl.appendChild(project);
+  }
+
+  const dates = document.createElement('div');
+  dates.className = 'dude-detail-dates';
+  const dateParts = [];
+  if (record.created_at) dateParts.push('Created: ' + new Date(record.created_at).toLocaleString());
+  if (record.updated_at) dateParts.push('Updated: ' + formatTime(new Date(record.updated_at).getTime()));
+  dates.textContent = dateParts.join(' \u00b7 ');
+  detailEl.appendChild(dates);
+
+  if (record.body) {
+    const body = document.createElement('div');
+    body.className = 'dude-detail-body';
+    body.textContent = record.body;
+    detailEl.appendChild(body);
+  }
+
+  // Update selected state in list
+  const listEl = wrapper.querySelector('.dude-record-list');
+  for (const li of listEl.querySelectorAll('li')) {
+    li.classList.remove('selected');
+  }
+  // Find by index — records are in same order as list items
+  const allLi = listEl.querySelectorAll('li');
+  // We can't match by index reliably, so just highlight by re-rendering
+  for (const li of allLi) {
+    // Re-trigger selected on matching click
+    li.classList.toggle('selected', false);
+  }
+  // Mark the clicked one
+  const clickedLi = [...allLi].find((_, i) => {
+    // Re-check — simplest is to just mark all with dataset
+    return false;
+  });
+  // Simpler: set dataset.id on li elements
+  for (const li of allLi) {
+    li.classList.toggle('selected', li.dataset.recordId === String(id));
   }
 }
 
