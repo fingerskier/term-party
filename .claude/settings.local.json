@@ -32,7 +32,20 @@
       "Bash(magick:*)",
       "Bash(npx:*)",
       "Bash(grep:*)",
-      "Bash(git -C \"C:/dev/fingerskier/agent/term-party\" log --oneline -10)"
+      "Bash(git -C \"C:/dev/fingerskier/agent/term-party\" log --oneline -10)",
+      "Bash(git -C \"C:/dev/fingerskier/agent/term-party\" ls-files)",
+      "Bash(test:*)",
+      "mcp__plugin_dude_dude__get_record",
+      "Bash(npm search:*)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(npm cache clean:*)",
+      "Bash(npm cache verify:*)",
+      "Bash(npm pack:*)",
+      "mcp__plugin_github_github__search_code",
+      "mcp__plugin_github_github__get_file_contents",
+      "Bash(echo:*)",
+      "Bash(locate:*)",
+      "WebFetch(domain:registry.npmjs.org)"
     ]
   }
 }

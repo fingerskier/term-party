@@ -17,9 +17,8 @@ const recentExits = []; // { id, title, exitCode, timestamp } — last 20
 const MAX_RECENT_EXITS = 20;
 const TAIL_BUFFER_SIZE = 4096; // bytes
 
-// --- Dude MCP client (lazy) ---
-let dudeClient = null;
-let dudeTransport = null;
+// --- Dude database (lazy, read-only) ---
+let dudeDb = null;
 
 function getSavePath() {
   return path.join(app.getPath('userData'), 'terminals.json');
@@ -136,46 +135,26 @@ function getAppIcon() {
   return path.join(__dirname, 'icon.icns');
 }
 
-// --- Dude MCP plugin detection and client ---
+// --- Dude database helpers ---
 
-function findDudePlugin() {
-  const baseDir = path.join(os.homedir(), '.claude', 'plugins', 'cache', 'fingerskier-plugins', 'dude');
-  try {
-    const versions = fs.readdirSync(baseDir).sort().reverse();
-    for (const ver of versions) {
-      const candidate = path.join(baseDir, ver, 'bin', 'dude-claude.js');
-      try {
-        fs.accessSync(candidate, fs.constants.R_OK);
-        return candidate;
-      } catch {}
-    }
-  } catch {}
-  return null;
+function getDudeDbPath() {
+  return path.join(os.homedir(), '.dude-claude', 'dude-libsql.db');
 }
 
-async function connectDudeClient() {
-  if (dudeClient) return dudeClient;
-  const pluginPath = findDudePlugin();
-  if (!pluginPath) throw new Error('Dude plugin not installed');
-
-  const { Client } = require('@modelcontextprotocol/sdk/dist/cjs/client/index.js');
-  const { StdioClientTransport } = require('@modelcontextprotocol/sdk/dist/cjs/client/stdio.js');
-
-  dudeTransport = new StdioClientTransport({
-    command: 'node',
-    args: [pluginPath, 'mcp'],
-    stderr: 'pipe',
-  });
-  dudeClient = new Client({ name: 'term-party', version: '1.0.0' }, { capabilities: {} });
-  await dudeClient.connect(dudeTransport);
-  return dudeClient;
+function openDudeDb() {
+  if (dudeDb) return dudeDb;
+  const dbPath = getDudeDbPath();
+  if (!fs.existsSync(dbPath)) return null;
+  const Database = require('better-sqlite3');
+  dudeDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+  return dudeDb;
 }
 
-async function callDudeTool(toolName, args = {}) {
-  const client = await connectDudeClient();
-  const result = await client.callTool({ name: toolName, arguments: args });
-  const text = result.content?.[0]?.text;
-  return text ? JSON.parse(text) : null;
+function closeDudeDb() {
+  if (dudeDb) {
+    try { dudeDb.close(); } catch {}
+    dudeDb = null;
+  }
 }
 
 // --- System stats ---
@@ -250,11 +229,7 @@ app.on('window-all-closed', async () => {
     term.pty.kill();
   }
   terminals.clear();
-  if (dudeTransport) {
-    try { await dudeTransport.close(); } catch {}
-    dudeTransport = null;
-    dudeClient = null;
-  }
+  closeDudeDb();
   app.quit();
 });
 
@@ -463,37 +438,84 @@ ipcMain.handle('get-system-stats', () => {
 // --- Dude IPC ---
 
 ipcMain.handle('dude-check-installed', () => {
-  return findDudePlugin() !== null;
+  return fs.existsSync(getDudeDbPath());
 });
 
-ipcMain.handle('dude-list-projects', async () => {
+ipcMain.handle('dude-list-projects', () => {
   try {
-    return await callDudeTool('list_projects', {});
+    const db = openDudeDb();
+    if (!db) return { error: 'Database not found' };
+    return db.prepare('SELECT id, name FROM project ORDER BY name').all();
   } catch (err) {
     return { error: err.message };
   }
 });
 
-ipcMain.handle('dude-list-records', async (_event, filters) => {
+ipcMain.handle('dude-list-records', (_event, filters) => {
   try {
-    return await callDudeTool('list_records', filters || {});
+    const db = openDudeDb();
+    if (!db) return { error: 'Database not found' };
+    let sql = `SELECT r.id, r.kind, r.title, r.status, p.name AS project, r.updated_at
+               FROM record r JOIN project p ON r.project_id = p.id`;
+    const conditions = [];
+    const params = {};
+    if (filters?.kind && filters.kind !== 'all') {
+      conditions.push('r.kind = @kind');
+      params.kind = filters.kind;
+    }
+    if (filters?.status && filters.status !== 'all') {
+      conditions.push('r.status = @status');
+      params.status = filters.status;
+    }
+    if (filters?.project && filters.project !== '*') {
+      conditions.push('p.name = @project');
+      params.project = filters.project;
+    }
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY r.updated_at DESC LIMIT 100';
+    return db.prepare(sql).all(params);
   } catch (err) {
     return { error: err.message };
   }
 });
 
-ipcMain.handle('dude-get-record', async (_event, id) => {
+ipcMain.handle('dude-get-record', (_event, id) => {
   try {
-    return await callDudeTool('get_record', { id });
+    const db = openDudeDb();
+    if (!db) return { error: 'Database not found' };
+    return db.prepare(`SELECT r.id, r.kind, r.title, r.body, r.status, p.name AS project,
+                        r.created_at, r.updated_at
+                 FROM record r JOIN project p ON r.project_id = p.id
+                 WHERE r.id = ?`).get(id) || { error: 'Record not found' };
   } catch (err) {
     return { error: err.message };
   }
 });
 
-ipcMain.handle('dude-search', async (_event, params) => {
+ipcMain.handle('dude-search', (_event, params) => {
   try {
+    const db = openDudeDb();
+    if (!db) return { error: 'Database not found' };
     const { query, ...filters } = params;
-    return await callDudeTool('search', { query, ...filters });
+    const pattern = `%${query}%`;
+    let sql = `SELECT r.id, r.kind, r.title, r.status, p.name AS project, r.updated_at
+               FROM record r JOIN project p ON r.project_id = p.id
+               WHERE (r.title LIKE @pattern OR r.body LIKE @pattern)`;
+    const sqlParams = { pattern };
+    if (filters?.kind && filters.kind !== 'all') {
+      sql += ' AND r.kind = @kind';
+      sqlParams.kind = filters.kind;
+    }
+    if (filters?.status && filters.status !== 'all') {
+      sql += ' AND r.status = @status';
+      sqlParams.status = filters.status;
+    }
+    if (filters?.project && filters.project !== '*') {
+      sql += ' AND p.name = @project';
+      sqlParams.project = filters.project;
+    }
+    sql += ' ORDER BY r.updated_at DESC LIMIT 100';
+    return db.prepare(sql).all(sqlParams);
   } catch (err) {
     return { error: err.message };
   }

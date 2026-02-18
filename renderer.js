@@ -1112,22 +1112,6 @@ async function dudeSelectRecord(id, wrapper) {
   // Update selected state in list
   const listEl = wrapper.querySelector('.dude-record-list');
   for (const li of listEl.querySelectorAll('li')) {
-    li.classList.remove('selected');
-  }
-  // Find by index — records are in same order as list items
-  const allLi = listEl.querySelectorAll('li');
-  // We can't match by index reliably, so just highlight by re-rendering
-  for (const li of allLi) {
-    // Re-trigger selected on matching click
-    li.classList.toggle('selected', false);
-  }
-  // Mark the clicked one
-  const clickedLi = [...allLi].find((_, i) => {
-    // Re-check — simplest is to just mark all with dataset
-    return false;
-  });
-  // Simpler: set dataset.id on li elements
-  for (const li of allLi) {
     li.classList.toggle('selected', li.dataset.recordId === String(id));
   }
 }
