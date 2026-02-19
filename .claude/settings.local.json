@@ -45,7 +45,8 @@
       "mcp__plugin_github_github__get_file_contents",
       "Bash(echo:*)",
       "Bash(locate:*)",
-      "WebFetch(domain:registry.npmjs.org)"
+      "WebFetch(domain:registry.npmjs.org)",
+      "mcp__plugin_github_github__search_repositories"
     ]
   }
 }
