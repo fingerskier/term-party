@@ -194,7 +194,36 @@ function getTerminalIds() {
     .map(li => Number(li.dataset.id));
 }
 
+// Snapshot of last rendered terminal list for diffing
+let lastRenderedTerminals = null;
+
+function terminalsChanged(terminals) {
+  if (!lastRenderedTerminals) return true;
+  if (terminals.length !== lastRenderedTerminals.length) return true;
+  const now = Date.now();
+  for (let i = 0; i < terminals.length; i++) {
+    const a = terminals[i], b = lastRenderedTerminals[i];
+    if (a.id !== b.id || a.title !== b.title || a.ghost !== b.ghost || a.cwd !== b.cwd) return true;
+    // Check if active/idle status flipped
+    const aActive = !a.ghost && (now - a.lastDataTime) < 3000;
+    const bActive = !b.ghost && (now - b.lastDataTime) < 3000;
+    if (aActive !== bActive) return true;
+    // Check if favorite status changed
+    if (!a.ghost && favoriteCwds.has(a.cwd) !== favoriteCwds.has(b.cwd)) return true;
+  }
+  // Check if activeViewId changed since last render
+  if (activeViewId !== lastRenderedActiveViewId) return true;
+  return false;
+}
+
+let lastRenderedActiveViewId = null;
+
 function renderList(terminals) {
+  // Skip full rebuild if nothing changed
+  if (!terminalsChanged(terminals)) return;
+  lastRenderedTerminals = terminals.map(t => ({ ...t }));
+  lastRenderedActiveViewId = activeViewId;
+
   terminalListEl.innerHTML = '';
   for (const t of terminals) {
     const li = document.createElement('li');
@@ -485,6 +514,9 @@ async function toggleFavorite(name, cwd, isFav) {
     currentFavorites.push({ name, cwd });
   }
 
+  // Invalidate diff cache so renderList re-renders with new fav state
+  lastRenderedTerminals = null;
+
   const terminals = await window.termParty.getTerminals();
   renderList(terminals);
 
@@ -498,7 +530,9 @@ async function toggleFavorite(name, cwd, isFav) {
     // on failure, reconciliation below will correct the UI
   }
 
+  // Single reconciliation pass
   await loadAndRenderFavorites();
+  lastRenderedTerminals = null; // ensure re-render picks up server state
   const termsFinal = await window.termParty.getTerminals();
   renderList(termsFinal);
 
@@ -656,13 +690,18 @@ window.termParty.onExit(({ id }) => {
 
 // ---- Resize handling ----
 
+let resizeTimer = null;
 window.addEventListener('resize', () => {
-  if (typeof activeViewId === 'number') {
-    const view = termViews.get(activeViewId);
-    if (view) {
-      view.fitAddon.fit();
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null;
+    if (typeof activeViewId === 'number') {
+      const view = termViews.get(activeViewId);
+      if (view) {
+        view.fitAddon.fit();
+      }
     }
-  }
+  }, 100);
 });
 
 // ---- Keyboard shortcuts ----
@@ -776,6 +815,10 @@ registerSpecialView('dashboard', {
   },
 });
 
+// Cache for dashboard to avoid unnecessary DOM rebuilds
+let lastDashExitIds = '';
+let lastDashTermIds = '';
+
 async function refreshDashboard() {
   const [dashData, stats] = await Promise.all([
     window.termParty.getDashboardData(),
@@ -790,72 +833,96 @@ async function refreshDashboard() {
 
   if (!cpuEl) return; // panel not built yet
 
+  // Stats: always update (cheap text updates)
   cpuEl.textContent = stats.cpuPercent + '%';
   memEl.textContent = `${stats.memUsedMB} / ${stats.memTotalMB} MB`;
   countEl.textContent = dashData.terminals.length;
 
-  // Recent exits
-  exitsEl.innerHTML = '';
-  if (dashData.recentExits.length === 0) {
-    exitsEl.innerHTML = '<div class="panel-empty">No recent exits</div>';
-  } else {
-    for (const exit of dashData.recentExits) {
-      const item = document.createElement('div');
-      item.className = 'dash-exit-item';
+  // Recent exits: only rebuild if the set changed
+  const exitFingerprint = dashData.recentExits.map(e => `${e.id}:${e.exitCode}`).join(',');
+  if (exitFingerprint !== lastDashExitIds) {
+    lastDashExitIds = exitFingerprint;
+    exitsEl.innerHTML = '';
+    if (dashData.recentExits.length === 0) {
+      exitsEl.innerHTML = '<div class="panel-empty">No recent exits</div>';
+    } else {
+      for (const exit of dashData.recentExits) {
+        const item = document.createElement('div');
+        item.className = 'dash-exit-item';
 
-      const code = document.createElement('span');
-      code.className = 'exit-code ' + (exit.exitCode === 0 ? 'success' : 'failure');
-      code.textContent = exit.exitCode ?? '?';
-      item.appendChild(code);
+        const code = document.createElement('span');
+        code.className = 'exit-code ' + (exit.exitCode === 0 ? 'success' : 'failure');
+        code.textContent = exit.exitCode ?? '?';
+        item.appendChild(code);
 
-      const title = document.createElement('span');
-      title.className = 'exit-title';
-      title.textContent = exit.title;
-      item.appendChild(title);
+        const title = document.createElement('span');
+        title.className = 'exit-title';
+        title.textContent = exit.title;
+        item.appendChild(title);
 
-      const time = document.createElement('span');
-      time.className = 'exit-time';
-      time.textContent = formatTime(exit.timestamp);
-      item.appendChild(time);
+        const time = document.createElement('span');
+        time.className = 'exit-time';
+        time.textContent = formatTime(exit.timestamp);
+        item.appendChild(time);
 
-      exitsEl.appendChild(item);
+        exitsEl.appendChild(item);
+      }
     }
   }
 
-  // Terminal tail cards
-  gridEl.innerHTML = '';
-  if (dashData.terminals.length === 0) {
-    gridEl.innerHTML = '<div class="panel-empty">No active terminals</div>';
+  // Terminal tail cards: rebuild structure only if terminal set changed;
+  // otherwise just update content and active/idle classes in place
+  const now = Date.now();
+  const termFingerprint = dashData.terminals.map(t => t.id).join(',');
+  if (termFingerprint !== lastDashTermIds) {
+    lastDashTermIds = termFingerprint;
+    gridEl.innerHTML = '';
+    if (dashData.terminals.length === 0) {
+      gridEl.innerHTML = '<div class="panel-empty">No active terminals</div>';
+    } else {
+      for (const term of dashData.terminals) {
+        const card = document.createElement('div');
+        const isActive = (now - term.lastDataTime) < 3000;
+        card.className = 'dash-tail-card ' + (isActive ? 'term-active' : 'term-idle');
+        card.dataset.termId = String(term.id);
+
+        const header = document.createElement('div');
+        header.className = 'dash-tail-card-header';
+
+        const titleEl = document.createElement('span');
+        titleEl.className = 'dash-tail-card-title';
+        titleEl.textContent = term.title || term.cwd;
+        header.appendChild(titleEl);
+
+        const gotoBtn = document.createElement('button');
+        gotoBtn.className = 'dash-tail-card-goto';
+        gotoBtn.textContent = 'Go to';
+        gotoBtn.addEventListener('click', () => activateTerminal(term.id));
+        header.appendChild(gotoBtn);
+
+        card.appendChild(header);
+
+        const content = document.createElement('div');
+        content.className = 'dash-tail-card-content';
+        const lines = stripAnsi(term.tailText).split('\n');
+        content.textContent = lines.slice(-20).join('\n');
+        card.appendChild(content);
+
+        gridEl.appendChild(card);
+      }
+    }
   } else {
+    // In-place update: just refresh content and active/idle state
     for (const term of dashData.terminals) {
-      const card = document.createElement('div');
-      const isActive = (Date.now() - term.lastDataTime) < 3000;
+      const card = gridEl.querySelector(`[data-term-id="${term.id}"]`);
+      if (!card) continue;
+      const isActive = (now - term.lastDataTime) < 3000;
       card.className = 'dash-tail-card ' + (isActive ? 'term-active' : 'term-idle');
-
-      const header = document.createElement('div');
-      header.className = 'dash-tail-card-header';
-
-      const titleEl = document.createElement('span');
-      titleEl.className = 'dash-tail-card-title';
-      titleEl.textContent = term.title || term.cwd;
-      header.appendChild(titleEl);
-
-      const gotoBtn = document.createElement('button');
-      gotoBtn.className = 'dash-tail-card-goto';
-      gotoBtn.textContent = 'Go to';
-      gotoBtn.addEventListener('click', () => activateTerminal(term.id));
-      header.appendChild(gotoBtn);
-
-      card.appendChild(header);
-
-      const content = document.createElement('div');
-      content.className = 'dash-tail-card-content';
-      // Show last ~20 lines of tail text
-      const lines = stripAnsi(term.tailText).split('\n');
-      content.textContent = lines.slice(-20).join('\n');
-      card.appendChild(content);
-
-      gridEl.appendChild(card);
+      const content = card.querySelector('.dash-tail-card-content');
+      if (content) {
+        const lines = stripAnsi(term.tailText).split('\n');
+        content.textContent = lines.slice(-20).join('\n');
+      }
     }
   }
 }
@@ -870,8 +937,10 @@ function formatTime(ts) {
   return d.toLocaleDateString();
 }
 
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
+const ANSI_OSC_RE = /\x1b\][^\x07]*\x07/g;
 function stripAnsi(str) {
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+  return str.replace(ANSI_ESCAPE_RE, '').replace(ANSI_OSC_RE, '');
 }
 
 // ---- Dude browser panel ----
@@ -1121,4 +1190,4 @@ async function dudeSelectRecord(id, wrapper) {
 refreshList();
 
 // Periodically refresh terminal list to update active/idle border indicators
-setInterval(refreshList, 3000);
+setInterval(refreshList, 5000);
