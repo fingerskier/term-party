@@ -17,7 +17,10 @@
     "electron",
     "manager"
   ],
-  "author": "Fingerskier",
+  "author": {
+    "name": "Fingerskier",
+    "email": "fingerskier@users.noreply.github.com"
+  },
   "license": "MIT",
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
