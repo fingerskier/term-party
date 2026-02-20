@@ -1,99 +1,140 @@
- Plan to implement                                                                    │
-│                                                                                      │
-│ Plan: Hybrid Semantic + Exact Text Search for Dude Browser                           │
-│                                                                                      │
-│ Context                                                                              │
-│                                                                                      │
-│ The Dude browser's search currently uses SQL LIKE substring matching. The dude       │
-│ database already stores 384-dim L2-normalized embeddings (F32_BLOB(384)) generated   │
-│ by all-MiniLM-L6-v2. We want to use these for semantic search while keeping exact    │
-│ text matching as a complement.                                                       │
-│                                                                                      │
-│ User requirement: Search returns top 10 semantic results + up to 3 exact text        │
-│ matches, deduplicated.                                                               │
-│                                                                                      │
-│ Limitation: better-sqlite3 can't call libSQL's native vector_top_k(). We must read   │
-│ embedding blobs and compute cosine similarity in JavaScript.                         │
-│                                                                                      │
-│ Changes                                                                              │
-│                                                                                      │
-│ 1. package.json — Add @huggingface/transformers dependency                           │
-│                                                                                      │
-│ "dependencies": {                                                                    │
-│   "@huggingface/transformers": "^3.0.0",                                             │
-│   ...                                                                                │
-│ }                                                                                    │
-│                                                                                      │
-│ Also add to asarUnpack in the build section so ONNX runtime binaries aren't packed:  │
-│ "asarUnpack": [                                                                      │
-│   "node_modules/node-pty/**",                                                        │
-│   "node_modules/better-sqlite3/**",                                                  │
-│   "node_modules/@huggingface/**",                                                    │
-│   "node_modules/onnxruntime-node/**"                                                 │
-│ ]                                                                                    │
-│                                                                                      │
-│ 2. main.js — Add embedding pipeline + rewrite search handler                         │
-│                                                                                      │
-│ a) Add lazy-loaded embedding pipeline (after openDudeDb block, ~line 158):           │
-│                                                                                      │
-│ - A getEmbedder() async function that lazy-loads @huggingface/transformers via       │
-│ dynamic import() (it's ESM-only)                                                     │
-│ - Uses pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2') — same model as     │
-│ dude-claude-plugin                                                                   │
-│ - Cache the pipeline instance after first load                                       │
-│                                                                                      │
-│ b) Add cosineSimilarity() helper:                                                    │
-│                                                                                      │
-│ - Parse embedding blob from DB as Float32Array (384 floats)                          │
-│ - Compute dot product (vectors are already L2-normalized, so dot = cosine)           │
-│                                                                                      │
-│ c) Add buildFilterSQL() helper to share filter logic between search paths:           │
-│                                                                                      │
-│ - Extracts the repeated kind/status/project filter clause building                   │
-│                                                                                      │
-│ d) Rewrite dude-search handler (lines 495-522) to be async:                          │
-│                                                                                      │
-│ 1. Generate query embedding via getEmbedder()                                        │
-│ 2. SEMANTIC: Fetch all records with non-null embeddings (applying filters)           │
-│    - Compute cosine similarity for each                                              │
-│    - Sort by similarity DESC, take top 10 (threshold >= 0.3)                         │
-│ 3. EXACT: SQL LIKE query for title/body match (applying filters)                     │
-│    - LIMIT 3                                                                         │
-│ 4. Merge: combine both arrays, deduplicate by record id                              │
-│    - Semantic results first, then exact matches not already present                  │
-│ 5. Return combined array                                                             │
-│                                                                                      │
-│ Files Modified                                                                       │
-│                                                                                      │
-│ File: package.json                                                                   │
-│ Change: Add @huggingface/transformers dep, update asarUnpack                         │
-│ ────────────────────────────────────────                                             │
-│ File: main.js                                                                        │
-│ Change: Add embedding pipeline, rewrite dude-search handler (~lines 495-522)         │
-│                                                                                      │
-│ Files NOT Modified                                                                   │
-│                                                                                      │
-│ - preload.js — IPC contract unchanged (dudeSearch(query, filters))                   │
-│ - renderer.js — Already consumes results generically as array of {id, kind, title,   │
-│ status, project, updated_at}                                                         │
-│                                                                                      │
-│ Potential Issues                                                                     │
-│                                                                                      │
-│ 1. ESM import: @huggingface/transformers is ESM-only. Must use const { pipeline } =  │
-│ await import('@huggingface/transformers') (dynamic import works in CJS/Electron)     │
-│ 2. First search latency: Model download + load on first query (~23MB model, cached   │
-│ after). Search will be slower the first time.                                        │
-│ 3. Buffer alignment: The F32_BLOB from better-sqlite3 arrives as a Node Buffer. Need │
-│  to handle byte offset alignment when creating Float32Array.                         │
-│ 4. Records without embeddings: Filter out records where embedding IS NULL for the    │
-│ semantic path; they'll still be found via exact text match.                          │
-│                                                                                      │
-│ Verification                                                                         │
-│                                                                                      │
-│ 1. npm install — installs @huggingface/transformers, postinstall rebuilds            │
-│ better-sqlite3                                                                       │
-│ 2. npm start — app launches                                                          │
-│ 3. Click "Dude" sidebar, type a search query                                         │
-│ 4. Results should show semantically relevant records (not just substring matches)    │
-│ 5. Exact phrase matches should appear even if they have low semantic similarity      │
-╰──────────────────────────────────────────────────────────────────────────────────────╯
+# Performance TODO
+
+Remaining performance recommendations that were identified during audit but
+not yet implemented (require larger structural changes).
+
+## 1. Add xterm WebGL renderer
+
+**Impact**: High for terminals with heavy output (builds, logs, large file cats)
+
+The app currently uses xterm.js's default DOM renderer, which creates a DOM node
+per cell. The WebGL addon (`@xterm/addon-webgl`) renders the entire terminal on
+a single `<canvas>` using GPU acceleration — typically 5-10x faster for
+high-throughput output.
+
+```bash
+npm install @xterm/addon-webgl
+```
+
+```js
+// renderer.js — when creating a terminal view
+import { WebglAddon } from '@xterm/addon-webgl';
+
+const webglAddon = new WebglAddon();
+term.loadAddon(webglAddon);
+
+// Fallback to canvas/DOM if WebGL context is lost
+webglAddon.onContextLoss(() => {
+  webglAddon.dispose();
+});
+```
+
+**Files**: `package.json`, `renderer.js`
+
+---
+
+## 2. Introduce a bundler (esbuild or Vite)
+
+**Impact**: Medium — faster startup, smaller footprint
+
+The renderer currently loads modules directly from `node_modules/` with no
+tree-shaking or minification:
+
+```js
+import { Terminal } from './node_modules/@xterm/xterm/lib/xterm.mjs';
+```
+
+Using esbuild (fast, zero-config) or Vite would:
+- Tree-shake unused exports from xterm and other deps
+- Minify JS + CSS for faster parse time
+- Bundle into a single file, reducing Electron file-read overhead
+
+Minimal esbuild setup:
+```bash
+npm install --save-dev esbuild
+```
+```json
+// package.json scripts
+"bundle": "esbuild renderer.js --bundle --outfile=dist/renderer.js --format=esm --platform=browser"
+```
+
+**Files**: `package.json`, `index.html` (update script src), new build step
+
+---
+
+## 3. Use event delegation on sidebar terminal list
+
+**Impact**: Low-Medium — reduces memory allocations on every poll cycle
+
+Currently each `<li>` in `#terminal-list` gets its own set of event listeners
+(click, dragstart, dragover, dragleave, drop, dragend, contextmenu) — all
+recreated every 5 seconds on refresh.
+
+Event delegation attaches a single listener on the parent `<ul>` and uses
+`e.target.closest('li')` to determine which item was interacted with. This
+eliminates hundreds of listener allocations per refresh cycle.
+
+```js
+terminalListEl.addEventListener('click', (e) => {
+  const li = e.target.closest('li');
+  if (!li) return;
+  const id = li.dataset.id;
+  // handle click for this terminal id...
+});
+```
+
+**Files**: `renderer.js`
+
+---
+
+## 4. Replace tail buffer string concatenation with a ring buffer
+
+**Impact**: Low — matters only for extremely high-throughput terminals
+
+The current tail buffer implementation (`main.js`) does:
+```js
+tailBuffer += data;
+if (tailBuffer.length > TAIL_BUFFER_SIZE) {
+  tailBuffer = tailBuffer.slice(-TAIL_BUFFER_SIZE);
+}
+```
+
+Every `onData` event creates a new string via concatenation, then potentially
+another via `slice`. For a terminal streaming continuous output (e.g.
+`yes | head -1000000`), this generates significant GC pressure.
+
+A circular buffer using a fixed-size `Buffer` or array with head/tail pointers
+would avoid all allocations in the hot path.
+
+**Files**: `main.js`
+
+---
+
+## 5. Pause dashboard polling when panel is not visible
+
+**Impact**: Low — saves 2 IPC round-trips + CPU stat computation every 2 seconds
+
+`refreshDashboard()` runs on a 2-second interval regardless of whether the
+dashboard panel is currently visible. When the user is viewing a terminal or
+the favorites panel, these IPC calls and DOM updates are wasted.
+
+```js
+// Only poll when dashboard is the active view
+let dashboardInterval = null;
+
+function startDashboardPolling() {
+  if (!dashboardInterval) {
+    dashboardInterval = setInterval(refreshDashboard, 2000);
+    refreshDashboard(); // immediate first refresh
+  }
+}
+
+function stopDashboardPolling() {
+  if (dashboardInterval) {
+    clearInterval(dashboardInterval);
+    dashboardInterval = null;
+  }
+}
+```
+
+**Files**: `renderer.js`
