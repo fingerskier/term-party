@@ -35,19 +35,25 @@ function loadSavedTerminals() {
   }
 }
 
-async function persistTerminals() {
-  const entries = [];
-  for (const [, term] of terminals) {
-    entries.push({ cwd: term.cwd });
-  }
-  for (const ghost of savedTerminals) {
-    entries.push({ cwd: ghost.cwd });
-  }
-  try {
-    await fs.promises.writeFile(getSavePath(), JSON.stringify(entries, null, 2));
-  } catch {
-    // best-effort persistence
-  }
+let persistTerminalsTimer = null;
+function persistTerminals() {
+  // Debounce: batch rapid create/kill/reorder operations into a single write
+  if (persistTerminalsTimer) clearTimeout(persistTerminalsTimer);
+  persistTerminalsTimer = setTimeout(async () => {
+    persistTerminalsTimer = null;
+    const entries = [];
+    for (const [, term] of terminals) {
+      entries.push({ cwd: term.cwd });
+    }
+    for (const ghost of savedTerminals) {
+      entries.push({ cwd: ghost.cwd });
+    }
+    try {
+      await fs.promises.writeFile(getSavePath(), JSON.stringify(entries, null, 2));
+    } catch {
+      // best-effort persistence
+    }
+  }, 500);
 }
 
 function getFavoritesPath() {
@@ -64,12 +70,17 @@ function loadFavorites() {
   }
 }
 
-async function persistFavorites() {
-  try {
-    await fs.promises.writeFile(getFavoritesPath(), JSON.stringify(favorites, null, 2));
-  } catch {
-    // best-effort persistence
-  }
+let persistFavoritesTimer = null;
+function persistFavorites() {
+  if (persistFavoritesTimer) clearTimeout(persistFavoritesTimer);
+  persistFavoritesTimer = setTimeout(async () => {
+    persistFavoritesTimer = null;
+    try {
+      await fs.promises.writeFile(getFavoritesPath(), JSON.stringify(favorites, null, 2));
+    } catch {
+      // best-effort persistence
+    }
+  }, 500);
 }
 
 function getDirectoryNamesPath() {
@@ -86,12 +97,17 @@ function loadDirectoryNames() {
   }
 }
 
-async function persistDirectoryNames() {
-  try {
-    await fs.promises.writeFile(getDirectoryNamesPath(), JSON.stringify(directoryNames, null, 2));
-  } catch {
-    // best-effort persistence
-  }
+let persistDirNamesTimer = null;
+function persistDirectoryNames() {
+  if (persistDirNamesTimer) clearTimeout(persistDirNamesTimer);
+  persistDirNamesTimer = setTimeout(async () => {
+    persistDirNamesTimer = null;
+    try {
+      await fs.promises.writeFile(getDirectoryNamesPath(), JSON.stringify(directoryNames, null, 2));
+    } catch {
+      // best-effort persistence
+    }
+  }, 500);
 }
 
 function migrateToDirectoryNames() {
@@ -208,7 +224,10 @@ function buildFilterSQL(filters, params = {}) {
   };
 }
 
-// --- System stats ---
+// --- System stats (delta-based CPU measurement) ---
+
+let prevCpuIdle = 0;
+let prevCpuTick = 0;
 
 function getSystemStats() {
   const cpus = os.cpus();
@@ -217,7 +236,14 @@ function getSystemStats() {
     for (const type in cpu.times) totalTick += cpu.times[type];
     totalIdle += cpu.times.idle;
   }
-  const cpuPercent = Math.round((1 - totalIdle / totalTick) * 100);
+
+  // Compute CPU% from delta since last sample (not cumulative since boot)
+  const idleDelta = totalIdle - prevCpuIdle;
+  const tickDelta = totalTick - prevCpuTick;
+  const cpuPercent = tickDelta > 0 ? Math.round((1 - idleDelta / tickDelta) * 100) : 0;
+  prevCpuIdle = totalIdle;
+  prevCpuTick = totalTick;
+
   const memTotal = os.totalmem();
   const memFree = os.freemem();
   const memUsed = memTotal - memFree;
@@ -275,7 +301,25 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', async () => {
-  await persistTerminals();
+  // Flush any pending debounced writes synchronously before quitting
+  if (persistTerminalsTimer) clearTimeout(persistTerminalsTimer);
+  if (persistFavoritesTimer) clearTimeout(persistFavoritesTimer);
+  if (persistDirNamesTimer) clearTimeout(persistDirNamesTimer);
+
+  // Write terminals synchronously to ensure data is saved on exit
+  const entries = [];
+  for (const [, term] of terminals) {
+    entries.push({ cwd: term.cwd });
+  }
+  for (const ghost of savedTerminals) {
+    entries.push({ cwd: ghost.cwd });
+  }
+  try {
+    fs.writeFileSync(getSavePath(), JSON.stringify(entries, null, 2));
+  } catch {
+    // best-effort
+  }
+
   for (const [, term] of terminals) {
     term.pty.kill();
   }
@@ -369,14 +413,15 @@ ipcMain.handle('kill-terminal', (_event, id) => {
 
 ipcMain.handle('get-terminals', () => {
   const list = [];
+  const orderedSet = new Set(terminalOrder);
   // Ordered terminals first
   for (const id of terminalOrder) {
     const term = terminals.get(id);
     if (term) list.push({ id, cwd: term.cwd, title: resolveDirectoryName(term.cwd), ghost: false, lastDataTime: term.lastDataTime });
   }
-  // Any terminals not in order array (safety fallback)
+  // Any terminals not in order array (safety fallback) — O(1) lookup via Set
   for (const [id, term] of terminals) {
-    if (!terminalOrder.includes(id)) {
+    if (!orderedSet.has(id)) {
       list.push({ id, cwd: term.cwd, title: resolveDirectoryName(term.cwd), ghost: false, lastDataTime: term.lastDataTime });
     }
   }
@@ -562,9 +607,12 @@ ipcMain.handle('dude-search', async (_event, params) => {
       throw new Error('Failed to generate query embedding');
     }
 
+    // Limit rows fetched for semantic scoring to avoid loading entire DB into memory.
+    // 500 most-recently-updated records is a reasonable candidate pool.
     const semanticSql = `SELECT r.id, r.kind, r.title, r.status, p.name AS project, r.updated_at, r.embedding
                          FROM record r JOIN project p ON r.project_id = p.id
-                         WHERE r.embedding IS NOT NULL${filterState.clause}`;
+                         WHERE r.embedding IS NOT NULL${filterState.clause}
+                         ORDER BY r.updated_at DESC LIMIT 500`;
     const semanticRows = db.prepare(semanticSql).all(filterState.params);
 
     const semanticResults = semanticRows
