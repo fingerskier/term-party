@@ -4,7 +4,7 @@
   "description": "Multi-terminal manager",
   "main": "main.js",
   "scripts": {
-    "postinstall": "electron-rebuild -f -o better-sqlite3",
+    "postinstall": "electron-rebuild -f -o better-sqlite3,node-pty",
     "start": "electron .",
     "dev": "electron . --dev",
     "build": "electron-builder --win --mac --linux",
